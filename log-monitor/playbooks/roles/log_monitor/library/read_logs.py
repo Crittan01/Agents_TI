@@ -65,14 +65,16 @@ _SEVERITY_PATTERNS = {
 }
 
 
-def find_recent_files(paths: list, patterns: list, cutoff_epoch: float) -> list:
+def find_recent_files(paths: list, patterns: list, cutoff_epoch: float) -> tuple:
     """
-    Retorna lista de archivos bajo paths[] que coincidan con patterns[]
-    y cuyo mtime >= cutoff_epoch. Usa glob recursivo.
+    Retorna (archivos_encontrados, paths_omitidos).
+    Omite silenciosamente rutas que no existen o no son directorios.
     """
-    found = set()
+    found    = set()
+    skipped  = []
     for base_path in paths:
         if not os.path.isdir(base_path):
+            skipped.append(base_path)
             continue
         for pattern in patterns:
             matched = glob.glob(
@@ -85,7 +87,7 @@ def find_recent_files(paths: list, patterns: list, cutoff_epoch: float) -> list:
                         found.add(filepath)
                 except OSError:
                     pass
-    return sorted(found)
+    return sorted(found), skipped
 
 
 def grep_file(filepath: str, grep_pattern: str, keyword: str) -> dict:
@@ -131,7 +133,7 @@ def process_path_group(path_group: dict, cutoff_epoch: float,
                        grep_pattern: str, keyword: str,
                        lock: threading.Lock, accumulator: dict) -> None:
     """Worker de thread: procesa un grupo {paths, patterns}."""
-    files = find_recent_files(
+    files, skipped = find_recent_files(
         path_group.get("paths", []),
         path_group.get("patterns", []),
         cutoff_epoch,
@@ -139,10 +141,13 @@ def process_path_group(path_group: dict, cutoff_epoch: float,
     for filepath in files:
         file_result = grep_file(filepath, grep_pattern, keyword)
         with lock:
-            accumulator["files_scanned"] += 1
-            accumulator["errors"]        += file_result["errors"]
-            accumulator["warns"]         += file_result["warns"]
+            accumulator["files_scanned"]  += 1
+            accumulator["errors"]         += file_result["errors"]
+            accumulator["warns"]          += file_result["warns"]
             accumulator["raw_lines"].extend(file_result["lines"])
+    if skipped:
+        with lock:
+            accumulator["paths_skipped"].extend(skipped)
 
 
 def run_module():
@@ -167,7 +172,7 @@ def run_module():
     cutoff_epoch = (datetime.now() - timedelta(hours=time_window_hours)).timestamp()
     grep_pattern = _SEVERITY_PATTERNS.get(severity, _SEVERITY_PATTERNS["ERROR"])
 
-    accumulator = {"files_scanned": 0, "errors": 0, "warns": 0, "raw_lines": []}
+    accumulator = {"files_scanned": 0, "errors": 0, "warns": 0, "raw_lines": [], "paths_skipped": []}
     lock        = threading.Lock()
 
     threads = [
@@ -192,6 +197,7 @@ def run_module():
         errors=accumulator["errors"],
         warns=accumulator["warns"],
         sample=sample,
+        paths_skipped=accumulator["paths_skipped"],
         time_window_hours=time_window_hours,
         severity=severity,
         keyword=keyword,

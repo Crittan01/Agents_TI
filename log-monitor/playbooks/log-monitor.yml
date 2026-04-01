@@ -36,62 +36,23 @@
   gather_facts: false
 
   tasks:
-    - name: "LOG | [PREFLIGHT] Verificar existencia de host_vars"
-      ansible.builtin.assert:
-        that:
-          - log_config is defined
-          - log_config.servicio is defined
-          - log_config.servicio != '__SIN_CONFIGURAR__'
-        fail_msg: |
-          ════════════════════════════════════════════════════════
-          HOST SIN CONFIGURACION: {{ inventory_hostname }}
-          ════════════════════════════════════════════════════════
-          El host esta en el inventario pero NO tiene host_vars.
-
-          ACCION REQUERIDA — elige una opcion:
-            1. Crear el archivo faltante:
-               playbooks/host_vars/{{ inventory_hostname }}.yml
-            2. Retirar el host del inventario si ya no aplica.
-            3. Si viene del Excel, re-ejecutar la migracion:
-               python3 scripts/migrate_to_hostvars.py
-
-          Fuente de verdad: shared/docs/Rutas_de_logs.xlsx
-
-          El playbook NO continuara hasta que TODOS los hosts
-          del grupo tengan su host_vars correctamente definido.
-          ════════════════════════════════════════════════════════
-        success_msg: "{{ inventory_hostname }} — host_vars encontrado"
-
-    - name: "LOG | [PREFLIGHT] Verificar que hay al menos una ruta configurada"
-      ansible.builtin.assert:
-        that:
-          - log_config.log_paths | default([]) | length > 0
-        fail_msg: |
-          ════════════════════════════════════════════════════════
-          HOST SIN RUTAS: {{ inventory_hostname }}
-          ════════════════════════════════════════════════════════
-          El host tiene host_vars pero log_config.log_paths esta vacio.
-
-            log_paths: {{ log_config.log_paths | default([]) | length }} entradas
-
-          ACCION REQUERIDA — elige una opcion:
-            1. Verificar en Rutas_de_logs.xlsx que el host tenga rutas
-               asignadas y re-ejecutar: python3 scripts/migrate_to_hostvars.py
-            2. Configurar manualmente en:
-               playbooks/host_vars/{{ inventory_hostname }}.yml
-            3. Retirar el host del inventario si no aplica.
-
-          El playbook NO continuara hasta que TODOS los hosts
-          tengan al menos una ruta configurada.
-          ════════════════════════════════════════════════════════
-        success_msg: "{{ inventory_hostname }} — {{ log_config.log_paths | length }} grupo(s) de rutas"
+    - name: "LOG | [PREFLIGHT] Advertir si host_vars ausente o con centinela"
+      ansible.builtin.debug:
+        msg:
+          - "AVISO: {{ inventory_hostname }} no tiene host_vars de aplicacion."
+          - "Se escanearan unicamente las rutas base del sistema (base_log_paths)."
+      when: >-
+        log_config is not defined or
+        (log_config.servicio | default('__SIN_CONFIGURAR__')) == '__SIN_CONFIGURAR__'
 
     - name: "LOG | [PREFLIGHT] Resumen OK"
       ansible.builtin.debug:
         msg:
           - "{{ inventory_hostname }}"
-          - "  Servicio:     {{ log_config.servicio }}"
-          - "  Grupos rutas: {{ log_config.log_paths | length }}"
+          - "  Servicio:      {{ log_config.servicio | default('(solo sistema)') }}"
+          - "  Rutas app:     {{ log_config.log_paths | default([]) | length }} grupo(s)"
+          - "  Rutas sistema: {{ base_log_paths | default([]) | length }} grupo(s)"
+          - "  Total grupos:  {{ (base_log_paths | default([]) + (log_config.log_paths | default([]))) | length }}"
 
 
 # =============================================================================

@@ -46,6 +46,7 @@
           errors: "{{ log_result.errors | default(0) | int }}"
           warns: "{{ log_result.warns | default(0) | int }}"
           sample: "{{ log_result.sample | default([]) }}"
+          paths_skipped: "{{ log_result.paths_skipped | default([]) }}"
           time_window_hours: "{{ log_time_window_hours | int }}"
           severity: "{{ log_severity }}"
           keyword: "{{ log_keyword | default('') }}"

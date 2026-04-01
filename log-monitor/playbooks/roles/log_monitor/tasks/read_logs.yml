@@ -7,7 +7,7 @@
 
 - name: "LOG | Leer logs del sistema - {{ inventory_hostname }}"
   read_logs:
-    log_paths: "{{ log_config.log_paths }}"
+    log_paths: "{{ base_log_paths | default([]) + (log_config.log_paths | default([])) }}"
     time_window_hours: "{{ log_time_window_hours | int }}"
     severity: "{{ log_severity }}"
     keyword: "{{ log_keyword }}"

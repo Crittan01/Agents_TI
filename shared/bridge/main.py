@@ -33,6 +33,7 @@ load_dotenv(os.path.join(_HERE, ".env"))
 from nlu import parse_intent
 from aap import (
     aap_get,
+    resolve_host_name,
     host_exists_in_inventory,
     group_exists_in_inventory,
     launch_health_job,
@@ -403,14 +404,16 @@ async def teams_webhook(request: Request, background_tasks: BackgroundTasks):
 
     # ── Health check individual / grupo ───────────────────────────────────────
     if intent == "health_check":
-        target      = parsed.get("target", "").upper()
+        raw_target  = parsed.get("target", "")
         target_type = parsed.get("type", "host")
 
-        exists = (
-            group_exists_in_inventory(target)
-            if target_type == "group"
-            else host_exists_in_inventory(target)
-        )
+        if target_type == "group":
+            target = raw_target.upper()
+            exists = group_exists_in_inventory(target)
+        else:
+            target = resolve_host_name(raw_target) or raw_target.upper()
+            exists = resolve_host_name(raw_target) is not None
+
         if not exists:
             return hc._card_response(hc.build_not_found_card(target, target_type))
 
@@ -446,15 +449,17 @@ async def teams_webhook(request: Request, background_tasks: BackgroundTasks):
 
     # ── Log check individual / grupo ──────────────────────────────────────────
     if intent == "log_check":
-        target      = parsed.get("target", "").upper()
+        raw_target  = parsed.get("target", "")
         target_type = parsed.get("type", "host")
         params      = _extract_log_params(parsed)
 
-        exists = (
-            group_exists_in_inventory(target)
-            if target_type == "group"
-            else host_exists_in_inventory(target)
-        )
+        if target_type == "group":
+            target = raw_target.upper()
+            exists = group_exists_in_inventory(target)
+        else:
+            target = resolve_host_name(raw_target) or raw_target.upper()
+            exists = resolve_host_name(raw_target) is not None
+
         if not exists:
             return lc._card_response(lc.build_not_found_card(target, target_type))
 

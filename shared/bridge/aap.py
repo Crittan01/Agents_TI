@@ -39,9 +39,17 @@ def aap_get(path: str) -> dict:
         return {}
 
 
+def resolve_host_name(server: str) -> Optional[str]:
+    """Devuelve el nombre exacto del host tal como está en AWX (case-insensitive). None si no existe."""
+    for variant in (server, server.upper(), server.lower()):
+        result = aap_get(f"/api/v2/inventories/{INVENTORY_ID}/hosts/?name={variant}&page_size=1")
+        if result.get("count", 0) > 0:
+            return result["results"][0]["name"]
+    return None
+
+
 def host_exists_in_inventory(server: str) -> bool:
-    result = aap_get(f"/api/v2/inventories/{INVENTORY_ID}/hosts/?name={server.upper()}&page_size=1")
-    return result.get("count", 0) > 0
+    return resolve_host_name(server) is not None
 
 
 def group_exists_in_inventory(group: str) -> bool:
@@ -54,7 +62,7 @@ def launch_health_job(target: str) -> dict:
         r = requests.post(
             f"{AWX_URL}/api/v2/job_templates/{HEALTH_JOB_TEMPLATE_ID}/launch/",
             headers=_HEADERS,
-            json={"extra_vars": {"target": target.upper()}},
+            json={"extra_vars": {"target": target}},
             timeout=10, verify=False,
         )
         r.raise_for_status()
@@ -66,7 +74,7 @@ def launch_health_job(target: str) -> dict:
 
 def launch_log_job(target: str, params: dict) -> dict:
     extra_vars = {
-        "app_server_group":      target.upper(),
+        "app_server_group":      target,
         "log_time_window_hours": int(params.get("time_window_hours", 2)),
         "log_severity":          params.get("severity", "ERROR").upper(),
         "log_keyword":           params.get("keyword", ""),

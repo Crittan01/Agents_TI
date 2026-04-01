@@ -1,0 +1,22 @@
+---
+# =============================================================================
+# RUTAS BASE DE SISTEMA OPERATIVO
+#
+# Aplican a TODOS los hosts automaticamente, sin necesidad de host_vars.
+# Si una ruta no existe en el servidor, el modulo la omite silenciosamente.
+# Se concatenan con log_config.log_paths (rutas de aplicacion) en tiempo
+# de ejecucion: base_log_paths + host-specific paths.
+# =============================================================================
+
+base_log_paths:
+  - paths:
+      - /var/log
+    patterns:
+      - "messages*"
+      - "syslog*"
+      - "dmesg*"
+  - paths:
+      - /var/log
+    patterns:
+      - "secure*"
+      - "audit*"
