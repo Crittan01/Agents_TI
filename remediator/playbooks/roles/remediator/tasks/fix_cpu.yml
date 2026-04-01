@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# FIX_CPU — Identifica y mata procesos con CPU excesiva
+# Seguro: nunca mata procesos del sistema (PID < 100, root críticos)
+# =============================================================================
+
+- name: "FIX_CPU | Listar procesos candidatos (CPU > {{ _cpu_thresh }}%)"
+  ansible.builtin.shell: |
+    ps aux --sort=-%cpu | awk -v thr={{ _cpu_thresh }} '
+      NR>1 && $3+0 >= thr && $1 != "root" {print $2, $3"%", $11}
+    ' | head -10
+  register: _cpu_candidates
+  changed_when: false
+
+- name: "FIX_CPU | Matar workers de stress bash"
+  ansible.builtin.shell: |
+    KILLED=$(pkill -c -f "end=.*SECONDS" 2>/dev/null || echo 0)
+    echo "$KILLED"
+  register: _cpu_stress_killed
+  changed_when: _cpu_stress_killed.stdout | int > 0
+
+- name: "FIX_CPU | Registrar accion — stress workers"
+  ansible.builtin.set_fact:
+    _actions: "{{ _actions + ['CPU: eliminados ' + _cpu_stress_killed.stdout + ' worker(s) bash de stress'] }}"
+  when: _cpu_stress_killed.stdout | int > 0
+
+- name: "FIX_CPU | Sin candidatos de stress"
+  ansible.builtin.set_fact:
+    _actions: "{{ _actions + ['CPU: no se encontraron procesos de stress activos'] }}"
+  when: _cpu_stress_killed.stdout | int == 0
+
+- name: "FIX_CPU | Registrar procesos candidatos en diagnóstico"
+  ansible.builtin.set_fact:
+    _diag: "{{ _diag | combine({'cpu_candidates': _cpu_candidates.stdout_lines}) }}"

@@ -1,0 +1,105 @@
+---
+# =============================================================================
+# ORQUESTACION PRINCIPAL — remediator
+# Decide qué tareas correr según remediation_mode e issue_type.
+# Nunca falla por un host individual — block/rescue/always garantiza artefacto.
+# =============================================================================
+
+- name: "REMEDIATOR | Bloque principal — {{ inventory_hostname }}"
+  block:
+
+    - name: "REMEDIATOR | Inicializar variables"
+      ansible.builtin.set_fact:
+        _mode:       "{{ remediation_mode   | default('diagnose') }}"
+        _issue:      "{{ issue_type         | default('auto') }}"
+        _cpu_thresh: "{{ cpu_kill_threshold | default(80) | int }}"
+        _ram_thresh: "{{ ram_kill_threshold | default(20) | int }}"
+        _disk_path:  "{{ disk_clean_path    | default('/tmp') }}"
+        _disk_days:  "{{ disk_clean_days    | default(7) | int }}"
+        _block_error: false
+        _actions: []
+
+    # ── Metricas pre-remediacion ───────────────────────────────────────────
+    - name: "REMEDIATOR | Leer metricas actuales"
+      ansible.builtin.include_tasks: diagnose.yml
+
+    # ── Determinar issue_type si es auto ──────────────────────────────────
+    - name: "REMEDIATOR | Resolver issue_type=auto"
+      ansible.builtin.set_fact:
+        _issue: >-
+          {%- set issues = [] -%}
+          {%- if _diag.cpu_pct | int >= 85 -%}{%- set _ = issues.append('cpu') -%}{%- endif -%}
+          {%- if _diag.ram_pct | float >= 85 -%}{%- set _ = issues.append('ram') -%}{%- endif -%}
+          {%- if _diag.disk_pct | int >= 85 -%}{%- set _ = issues.append('disk') -%}{%- endif -%}
+          {{ issues | join(',') if issues else 'none' }}
+      when: _issue == "auto"
+
+    # ── MODO DIAGNOSE — solo reporta, no actua ────────────────────────────
+    - name: "REMEDIATOR | [DIAGNOSE] Resumen sin accion"
+      ansible.builtin.debug:
+        msg:
+          - "Modo DIAGNOSE — sin cambios en {{ inventory_hostname }}"
+          - "CPU: {{ _diag.cpu_pct }}% | RAM: {{ _diag.ram_pct }}% | Disco: {{ _diag.disk_pct }}%"
+          - "Issues detectados: {{ _issue }}"
+      when: _mode == "diagnose"
+
+    # ── MODO REMEDIATE / FULL — ejecuta correcciones ──────────────────────
+    - name: "REMEDIATOR | [FIX] CPU"
+      ansible.builtin.include_tasks: fix_cpu.yml
+      when:
+        - _mode in ["remediate", "full"]
+        - "'cpu' in _issue or _issue == 'all'"
+
+    - name: "REMEDIATOR | [FIX] RAM"
+      ansible.builtin.include_tasks: fix_ram.yml
+      when:
+        - _mode in ["remediate", "full"]
+        - "'ram' in _issue or _issue == 'all'"
+
+    - name: "REMEDIATOR | [FIX] DISCO"
+      ansible.builtin.include_tasks: fix_disk.yml
+      when:
+        - _mode in ["remediate", "full"]
+        - "'disk' in _issue or _issue == 'all'"
+
+    # ── Metricas post-remediacion (solo en full/remediate) ────────────────
+    - name: "REMEDIATOR | Leer metricas post-remediacion"
+      ansible.builtin.include_tasks: diagnose.yml
+      vars:
+        _diag_phase: "post"
+      when: _mode in ["remediate", "full"]
+
+  rescue:
+    - name: "REMEDIATOR | Capturar error"
+      ansible.builtin.set_fact:
+        _block_error: true
+        _block_error_msg: "{{ ansible_failed_result.msg | default('Error inesperado') }}"
+
+  always:
+    - name: "REMEDIATOR | Construir artefacto del host"
+      ansible.builtin.set_fact:
+        _remediation_data:
+          hostname:      "{{ inventory_hostname }}"
+          mode:          "{{ _mode }}"
+          issue_type:    "{{ _issue | default('none') }}"
+          diagnosis:     "{{ _diag | default({}) }}"
+          actions_taken: "{{ _actions | default([]) }}"
+          disk_freed_mb: "{{ _disk_freed_mb | default(0) | int }}"
+          pre_metrics:   "{{ _pre_metrics  | default({}) }}"
+          post_metrics:  "{{ _post_metrics | default({}) }}"
+          block_error:     "{{ _block_error | default(false) }}"
+          block_error_msg: "{{ _block_error_msg | default('') }}"
+          status: >-
+            {{ 'error' if (_block_error | default(false))
+               else ('remediated' if _mode in ['remediate','full'] and _actions | default([]) | length > 0
+               else ('diagnosed' if _mode == 'diagnose'
+               else 'no_action_needed')) }}
+
+    - name: "REMEDIATOR | STDOUT resumen"
+      ansible.builtin.debug:
+        msg:
+          - "Host:     {{ inventory_hostname }}"
+          - "Modo:     {{ _remediation_data.mode }}"
+          - "Issues:   {{ _remediation_data.issue_type }}"
+          - "Acciones: {{ _remediation_data.actions_taken | length }}"
+          - "Estado:   {{ _remediation_data.status | upper }}"

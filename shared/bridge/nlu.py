@@ -1,8 +1,10 @@
 """
-NLU unificado: resuelve intenciones de health-check Y log-monitor.
+NLU unificado: resuelve intenciones de health-check, log-monitor y remediator.
 La regla de oro para distinguirlos:
-  - "CPU / RAM / disco / memoria / salud / estado"  → health
-  - "logs / errores en logs / busca / ORA- / Exception" → log
+  - "CPU / RAM / disco / memoria / salud / estado"        → health
+  - "logs / errores en logs / busca / ORA- / Exception"   → log
+  - "limpia / libera / arregla / remedia / mata procesos" → remediate
+  - "diagnostica / qué tiene / qué pasa"                  → diagnose
   - "valida [servidor]" sin contexto → health (accion por defecto)
   - "hay errores en [ambiente]"       → log  (errores = errores de aplicacion)
 """
@@ -54,8 +56,9 @@ _ENV_GROUPS = {
 
 _SYSTEM_PROMPT = (
     "Eres AnsibleBot, asistente de operaciones de infraestructura Linux para Sura / NTT Data.\n"
-    "Puedes ejecutar DOS tipos de acciones: verificar SALUD del sistema (CPU/RAM/disco) "
-    "o consultar LOGS de aplicacion (errores, warnings, excepciones).\n\n"
+    "Puedes ejecutar TRES tipos de acciones: verificar SALUD del sistema (CPU/RAM/disco), "
+    "consultar LOGS de aplicacion (errores, warnings, excepciones), "
+    "o REMEDIAR problemas (liberar RAM, limpiar disco, matar procesos de CPU).\n\n"
     "INVENTARIO:\n" + _INVENTORY_TEXT + "\n\n"
     "GRUPOS:\n" + _GROUPS_LIST + "\n\n"
     "CONVENCION DE NOMBRES:\n" + _NAMING_CONVENTION + "\n\n"
@@ -66,43 +69,49 @@ _SYSTEM_PROMPT = (
     "  desarrollo : WEBLOGIC_DLLO, P8_DESA\n"
     "  laboratorio: WEBLOGIC_LAB, JOOMLA_LABO, P8_LABO\n\n"
     "REGLAS DE CLASIFICACION — aplica en orden estricto, la primera que coincida gana:\n\n"
+    "  REGLA 0 — SIEMPRE REMEDIACION si el mensaje contiene acciones correctivas:\n"
+    "    limpia, libera, arregla, remedia, corrige, mata procesos, elimina, borra, solucion,\n"
+    "    soluciona, limpiar, liberar, remediar, fix, clean, free up.\n"
+    "    Parametro issue_type segun contexto:\n"
+    "      'disco/espacio/tmp' → disk  |  'RAM/memoria' → ram  |  'CPU/procesos' → cpu\n"
+    "      'todo/all/ambos' o sin especificar → auto\n"
+    "    'diagnostica / que pasa / que tiene / que hay' → diagnose (sin cambios)\n"
+    "    'revisa y arregla / diagnostica y corrige' → full (diagnostica + remedia)\n\n"
     "  REGLA 1 — SIEMPRE LOG si el mensaje contiene alguna de estas palabras:\n"
     "    errores, error, logs, log, busca, ORA-, Exception, OutOfMemory, WARN, falla, fallos,\n"
     "    warnings, excepciones, monitorea, revisa logs.\n"
     "    IMPORTANTE: 'hay errores en X', 'errores en X', 'que errores hay' → SIEMPRE log_fleet o log_check.\n"
     "    La palabra 'errores' referencia SIEMPRE logs de aplicacion, NUNCA metricas de salud.\n\n"
-    "  REGLA 2 — SALUD solo si NO hay ninguna palabra de REGLA 1 Y el mensaje contiene:\n"
+    "  REGLA 2 — SALUD solo si NO hay ninguna palabra de REGLA 0 o REGLA 1 Y el mensaje contiene:\n"
     "    CPU, RAM, disco, memoria, salud, health, recursos, como esta, valida, checa, revisar,\n"
     "    umbral, critico, criticos, saturado, saturados, estan mal, andan mal, mal estado.\n\n"
-    "  REGLA 3 — Si hay ambiguedad de INTENT (no sabes si es log o health) → usa LOG (nunca clarify).\n"
-    "    'clarify' se reserva EXCLUSIVAMENTE para cuando hay 2+ hosts/grupos con el mismo nombre\n"
-    "    y no puedes distinguir cual eligio el usuario. NO uses clarify para ambiguedad de intent.\n\n"
+    "  REGLA 3 — Si hay ambiguedad de INTENT → usa LOG (nunca clarify).\n"
+    "    'clarify' se reserva EXCLUSIVAMENTE para cuando hay 2+ hosts/grupos con el mismo nombre.\n\n"
     "EJEMPLOS DE CLASIFICACION:\n"
-    "  'hay errores en laboratorio'                    → log_fleet  (errores = logs de aplicacion)\n"
-    "  'errores en WEBLOGIC_PDN'                       → log_check  (grupo especifico)\n"
-    "  'logs de produccion'                            → log_fleet\n"
+    "  'limpia el disco de ol9server1'                 → remediate  issue_type=disk\n"
+    "  'libera RAM en WEBLOGIC_PDN'                    → remediate  issue_type=ram\n"
+    "  'arregla ol9server1'                            → remediate  issue_type=auto\n"
+    "  'diagnostica ol9server1'                        → diagnose\n"
+    "  'que esta consumiendo CPU en ol9server1'        → diagnose   issue_type=cpu\n"
+    "  'revisa y arregla todo en ol9server1'           → full_remediate\n"
+    "  'hay errores en laboratorio'                    → log_fleet\n"
     "  'salud de laboratorio'                          → fleet_check\n"
     "  'como esta el disco de P8_DESA'                 → health_check\n"
-    "  'valida SGWLSAPPP01'                            → health_check  (no menciona errores ni logs)\n"
-    "  'valida errores en laboratorio'                 → log_fleet  (errores tiene prioridad)\n"
-    "  'que servidores estan mal en laboratorio'       → fleet_check  (mal estado = salud, REGLA 2)\n"
-    "  'algo raro en desarrollo'                       → log_fleet  (ambiguo → LOG, REGLA 3)\n"
-    "  'muestrame detalle de umbral alto de X Env'     → fleet_check/health_check  (umbral = salud)\n"
-    "  'hay problemas en produccion'                   → fleet_check  (problemas sin errores = salud)\n\n"
+    "  'algo raro en desarrollo'                       → log_fleet\n\n"
     "INTENTS DE SALUD:\n"
-    "  fleet_check : ambiente completo sin tecnologia especifica (toda produccion, todo lab)\n"
+    "  fleet_check : ambiente completo\n"
     "  health_check: grupo especifico o host individual\n\n"
     "INTENTS DE LOG:\n"
-    "  log_fleet : ambiente completo sin tecnologia especifica\n"
-    "  log_check : grupo especifico o host individual\n"
-    "  Parametros opcionales (extrae solo si el usuario los menciona):\n"
-    "    time_window_hours: 'ultima hora'->1, 'ultimas 4h'->4, 'hoy'->24, 'ultimas 24h/24 horas/un dia'->24,\n"
-    "      'ultimas 12h'->12, 'ultimas 8h'->8, 'ultimas 48h/2 dias'->48 (default omitir)\n"
-    "    severity: 'solo errores'->ERROR, 'errores y/o warnings'->WARN, 'warnings'->WARN, 'todo/all'->ALL\n"
-    "    keyword: termino libre de busqueda ('busca ORA-', 'contiene NullPointer')\n\n"
+    "  log_fleet, log_check\n"
+    "  Parametros: time_window_hours, severity (ERROR|WARN|ALL), keyword\n\n"
+    "INTENTS DE REMEDIACION:\n"
+    "  diagnose      : solo recolecta info, NO hace cambios\n"
+    "  remediate     : ejecuta la correccion\n"
+    "  full_remediate: diagnostica + corrige + verifica\n"
+    "  Parametros: issue_type (cpu|ram|disk|all|auto)\n\n"
     "OTROS:\n"
-    "  clarify : SOLO cuando 2+ hosts/grupos tienen el mismo nombre y no se puede distinguir cual\n"
-    "  unknown : accion no relacionada (reiniciar, instalar, saludar, etc.)\n\n"
+    "  clarify : SOLO para ambiguedad de nombre de host/grupo\n"
+    "  unknown : accion no relacionada\n\n"
     "Responde UNICAMENTE con JSON valido en una sola linea, sin markdown.\n\n"
     "FORMATOS (elige exactamente uno):\n"
     '{"intent":"health_check","target":"NOMBRE","type":"host"}\n'
@@ -111,6 +120,11 @@ _SYSTEM_PROMPT = (
     '{"intent":"log_check","target":"NOMBRE","type":"host"}\n'
     '{"intent":"log_check","target":"NOMBRE","type":"group","time_window_hours":2,"severity":"ERROR","keyword":""}\n'
     '{"intent":"log_fleet","targets":["G1","G2"],"environment":"produccion|desarrollo|laboratorio","time_window_hours":2,"severity":"ERROR","keyword":""}\n'
+    '{"intent":"diagnose","target":"NOMBRE","type":"host","issue_type":"auto"}\n'
+    '{"intent":"diagnose","target":"NOMBRE","type":"group","issue_type":"cpu"}\n'
+    '{"intent":"remediate","target":"NOMBRE","type":"host","issue_type":"disk"}\n'
+    '{"intent":"remediate","target":"NOMBRE","type":"group","issue_type":"ram"}\n'
+    '{"intent":"full_remediate","target":"NOMBRE","type":"host","issue_type":"auto"}\n'
     '{"intent":"clarify","question":"pregunta corta max 15 palabras"}\n'
     '{"intent":"unknown"}\n'
 )
@@ -122,11 +136,39 @@ _client: Optional[anthropic.Anthropic] = (
 
 def _fallback_parse(text: str) -> dict:
     lower = text.lower()
-    log_kw    = ("log", "errores", "hay error", "busca", "ora-", "exception",
-                 "outofmemory", "warn", "falla", "fallos")
-    health_kw = ("cpu", "ram", "disco", "salud", "health", "valida", "revisar", "checa")
-    is_log    = any(kw in lower for kw in log_kw)
-    is_health = any(kw in lower for kw in health_kw) and not is_log
+
+    remediate_kw = ("limpia", "libera", "arregla", "remedia", "corrige",
+                    "mata proceso", "elimina", "soluciona", "fix", "clean")
+    diagnose_kw  = ("diagnostica", "que pasa", "que tiene", "que hay",
+                    "que esta consumiendo", "que consume")
+    full_kw      = ("revisa y arregla", "diagnostica y corrige", "revisa y corrige")
+    log_kw       = ("log", "errores", "hay error", "busca", "ora-", "exception",
+                    "outofmemory", "warn", "falla", "fallos")
+    health_kw    = ("cpu", "ram", "disco", "salud", "health", "valida", "revisar", "checa")
+
+    is_full      = any(kw in lower for kw in full_kw)
+    is_remediate = any(kw in lower for kw in remediate_kw) and not is_full
+    is_diagnose  = any(kw in lower for kw in diagnose_kw) and not is_full and not is_remediate
+    is_log       = any(kw in lower for kw in log_kw) and not is_remediate and not is_diagnose
+    is_health    = any(kw in lower for kw in health_kw) and not is_log and not is_remediate
+
+    # Detectar issue_type para remediación
+    issue = "auto"
+    if "disco" in lower or "tmp" in lower or "espacio" in lower: issue = "disk"
+    elif "ram" in lower or "memoria" in lower:                   issue = "ram"
+    elif "cpu" in lower or "proceso" in lower:                   issue = "cpu"
+
+    # Extraer target (último token que pueda ser host/grupo)
+    parts     = text.strip().split()
+    candidate = parts[-1].upper() if parts else ""
+    ttype     = "group" if candidate in _GROUPS_SET else "host"
+
+    if is_full:
+        return {"intent": "full_remediate", "target": candidate, "type": ttype, "issue_type": issue}
+    if is_remediate:
+        return {"intent": "remediate", "target": candidate, "type": ttype, "issue_type": issue}
+    if is_diagnose:
+        return {"intent": "diagnose", "target": candidate, "type": ttype, "issue_type": issue}
 
     intent_prefix = "log" if (is_log or not is_health) else "health"
 
@@ -137,9 +179,6 @@ def _fallback_parse(text: str) -> dict:
                 return {"intent": "log_fleet", "targets": groups, "environment": env}
             return {"intent": "fleet_check", "targets": groups, "environment": env, "filter": "all"}
 
-    # Detectar grupo o host individual
-    parts     = text.strip().split()
-    candidate = parts[-1].upper() if parts else ""
     if candidate in _GROUPS_SET:
         if intent_prefix == "log":
             return {"intent": "log_check", "target": candidate, "type": "group"}

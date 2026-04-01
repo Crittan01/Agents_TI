@@ -27,6 +27,7 @@ _AGENTS_DIR = os.path.dirname(os.path.dirname(_HERE))
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(_AGENTS_DIR, "health-check", "bridge"))
 sys.path.insert(0, os.path.join(_AGENTS_DIR, "log-monitor",  "bridge"))
+sys.path.insert(0, os.path.join(_AGENTS_DIR, "remediator",   "bridge"))
 
 load_dotenv(os.path.join(_HERE, ".env"))
 
@@ -38,11 +39,14 @@ from aap import (
     group_exists_in_inventory,
     launch_health_job,
     launch_log_job,
+    launch_remediation_job,
     extract_health_data,
     extract_log_data,
+    extract_remediation_data,
 )
-import health_cards as hc
-import log_cards    as lc
+import health_cards     as hc
+import log_cards        as lc
+import remediator_cards as rc
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 
@@ -350,6 +354,31 @@ def wait_and_report_log(job_id: int, target: str, target_type: str, params: dict
     post_to_teams(lc.build_error_card(target, job_id, "Timeout: el job superó 5 minutos."))
 
 
+def wait_and_report_remediation(job_id: int, target: str,
+                                target_type: str, params: dict) -> None:
+    logger.info("BG-R esperando job #%d para %s (%s)", job_id, target, target_type)
+    mode = params.get("remediation_mode", "diagnose")
+    for _ in range(60):
+        time.sleep(5)
+        job    = aap_get(f"/api/v2/jobs/{job_id}/")
+        status = job.get("status", "")
+        if status == "successful":
+            data = extract_remediation_data(job_id)
+            if data:
+                if target_type == "group" or len(data) > 1:
+                    card = rc.build_remediation_group_card(target, job_id, data)
+                else:
+                    card = rc.build_remediation_card(target, job_id, data)
+            else:
+                card = rc.build_error_card(target, job_id, "Job exitoso pero sin datos de remediacion.")
+            post_to_teams(card)
+            return
+        if status in ("failed", "error", "canceled"):
+            post_to_teams(rc.build_error_card(target, job_id, f"El job terminó con estado: {status}"))
+            return
+    post_to_teams(rc.build_error_card(target, job_id, "Timeout: el job superó 5 minutos."))
+
+
 # ─── Endpoint principal ──────────────────────────────────────────────────────
 
 @app.post("/teams/webhook")
@@ -470,6 +499,37 @@ async def teams_webhook(request: Request, background_tasks: BackgroundTasks):
 
         return lc._card_response(lc.build_log_launch_card(target, job_id, params, target_type))
 
+    # ── Diagnose / Remediate / Full remediate ─────────────────────────────────
+    if intent in ("diagnose", "remediate", "full_remediate"):
+        raw_target  = parsed.get("target", "")
+        target_type = parsed.get("type", "host")
+        issue_type  = parsed.get("issue_type", "auto")
+
+        mode_map = {"diagnose": "diagnose", "remediate": "remediate", "full_remediate": "full"}
+        remediation_mode = mode_map[intent]
+
+        if target_type == "group":
+            target = raw_target.upper()
+            exists = group_exists_in_inventory(target)
+        else:
+            target = resolve_host_name(raw_target) or raw_target.upper()
+            exists = resolve_host_name(raw_target) is not None
+
+        if not exists:
+            return rc._card_response(rc.build_not_found_card(target))
+
+        params = {"remediation_mode": remediation_mode, "issue_type": issue_type}
+        resp   = launch_remediation_job(target, params)
+        job_id = resp.get("id")
+        if job_id:
+            background_tasks.add_task(
+                wait_and_report_remediation, job_id, target, target_type, params
+            )
+
+        return rc._card_response(
+            rc.build_remediation_launch_card(target, job_id, remediation_mode, issue_type)
+        )
+
     # ── Unknown ───────────────────────────────────────────────────────────────
     logger.info("ROUTER intent desconocido para: %r", clean[:80])
     return {
@@ -480,6 +540,8 @@ async def teams_webhook(request: Request, background_tasks: BackgroundTasks):
             "- @AnsibleBot salud de produccion\n"
             "- @AnsibleBot logs de WEBLOGIC_PDN\n"
             "- @AnsibleBot errores en laboratorio ultima hora\n"
-            "- @AnsibleBot hay errores en P8_DESA"
+            "- @AnsibleBot limpia el disco de ol9server1\n"
+            "- @AnsibleBot libera RAM en ol9server1\n"
+            "- @AnsibleBot diagnostica ol9server1"
         ),
     }

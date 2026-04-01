@@ -1,0 +1,81 @@
+---
+# =============================================================================
+# DIAGNOSE — Recolecta métricas y causa raíz sin modificar nada
+# Se ejecuta dos veces en modo full: antes (_pre_metrics) y después (_post_metrics)
+# Variable de control: _diag_phase (pre | post) — default: pre
+# =============================================================================
+
+- name: "DIAG | Leer CPU actual"
+  ansible.builtin.shell: |
+    read _ u1 n1 s1 i1 _ < <(grep '^cpu ' /proc/stat); sleep 1
+    read _ u2 n2 s2 i2 _ < <(grep '^cpu ' /proc/stat)
+    total=$(( (u2+n2+s2+i2) - (u1+n1+s1+i1) ))
+    idle=$(( i2 - i1 ))
+    echo $(( (total - idle) * 100 / (total > 0 ? total : 1) ))
+  register: _cpu_raw
+  changed_when: false
+
+- name: "DIAG | Leer RAM actual"
+  ansible.builtin.shell: |
+    free -m | awk '/^Mem:/{printf "%.1f", ($3/$2)*100}'
+  register: _ram_raw
+  changed_when: false
+
+- name: "DIAG | Leer disco actual"
+  ansible.builtin.shell: |
+    df {{ _disk_path }} | awk 'NR==2{gsub("%","",$5); print $5}'
+  register: _disk_raw
+  changed_when: false
+
+- name: "DIAG | Top 5 procesos por CPU"
+  ansible.builtin.shell: |
+    ps aux --sort=-%cpu | awk 'NR>1 && NR<=6 {printf "%s%%\t%s\n", $3, $11}' | head -5
+  register: _top_cpu_raw
+  changed_when: false
+
+- name: "DIAG | Top 5 procesos por RAM"
+  ansible.builtin.shell: |
+    ps aux --sort=-%mem | awk 'NR>1 && NR<=6 {printf "%s%%\t%s\n", $4, $11}' | head -5
+  register: _top_ram_raw
+  changed_when: false
+
+- name: "DIAG | Archivos grandes en {{ _disk_path }} (>100MB)"
+  ansible.builtin.shell: |
+    find {{ _disk_path }} -maxdepth 3 -type f -size +100M \
+      -exec du -sh {} \; 2>/dev/null | sort -rh | head -10
+  register: _large_files_raw
+  changed_when: false
+
+- name: "DIAG | Archivos viejos en {{ _disk_path }} (>{{ _disk_days }} días)"
+  ansible.builtin.shell: |
+    find {{ _disk_path }} -maxdepth 3 -type f -mtime +{{ _disk_days }} \
+      -exec du -sh {} \; 2>/dev/null | sort -rh | head -10
+  register: _old_files_raw
+  changed_when: false
+
+- name: "DIAG | Guardar métricas {{ _diag_phase | default('pre') }}"
+  ansible.builtin.set_fact:
+    _diag:
+      cpu_pct:       "{{ _cpu_raw.stdout  | int }}"
+      ram_pct:       "{{ _ram_raw.stdout  | float }}"
+      disk_pct:      "{{ _disk_raw.stdout | int }}"
+      top_cpu_procs: "{{ _top_cpu_raw.stdout_lines }}"
+      top_ram_procs: "{{ _top_ram_raw.stdout_lines }}"
+      large_files:   "{{ _large_files_raw.stdout_lines }}"
+      old_files:     "{{ _old_files_raw.stdout_lines }}"
+
+- name: "DIAG | Guardar como pre_metrics"
+  ansible.builtin.set_fact:
+    _pre_metrics:
+      cpu_pct:  "{{ _diag.cpu_pct }}"
+      ram_pct:  "{{ _diag.ram_pct }}"
+      disk_pct: "{{ _diag.disk_pct }}"
+  when: _diag_phase is not defined or _diag_phase == "pre"
+
+- name: "DIAG | Guardar como post_metrics"
+  ansible.builtin.set_fact:
+    _post_metrics:
+      cpu_pct:  "{{ _diag.cpu_pct }}"
+      ram_pct:  "{{ _diag.ram_pct }}"
+      disk_pct: "{{ _diag.disk_pct }}"
+  when: _diag_phase is defined and _diag_phase == "post"

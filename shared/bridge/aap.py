@@ -1,7 +1,8 @@
 """
 AAP client unificado para el router AnsibleBot.
-Maneja dos job templates: health-check (HEALTH_JOB_TEMPLATE_ID)
-                          log-monitor  (LOG_JOB_TEMPLATE_ID)
+Maneja tres job templates: health-check (HEALTH_JOB_TEMPLATE_ID)
+                           log-monitor  (LOG_JOB_TEMPLATE_ID)
+                           remediator   (REMEDIATION_JOB_TEMPLATE_ID)
 """
 import os
 import time
@@ -19,9 +20,10 @@ load_dotenv()
 
 AWX_URL                = os.getenv("AWX_URL", "https://ol9-awx.lab.com/")
 AWX_TOKEN              = os.getenv("AWX_TOKEN", "")
-HEALTH_JOB_TEMPLATE_ID = int(os.getenv("HEALTH_JOB_TEMPLATE_ID", "9"))
-LOG_JOB_TEMPLATE_ID    = int(os.getenv("LOG_JOB_TEMPLATE_ID",    "10"))
-INVENTORY_ID           = int(os.getenv("INVENTORY_ID", "2"))
+HEALTH_JOB_TEMPLATE_ID     = int(os.getenv("HEALTH_JOB_TEMPLATE_ID",     "9"))
+LOG_JOB_TEMPLATE_ID        = int(os.getenv("LOG_JOB_TEMPLATE_ID",        "10"))
+REMEDIATION_JOB_TEMPLATE_ID = int(os.getenv("REMEDIATION_JOB_TEMPLATE_ID", "11"))
+INVENTORY_ID               = int(os.getenv("INVENTORY_ID", "2"))
 
 _HEADERS = {
     "Authorization": f"Bearer {AWX_TOKEN}",
@@ -121,5 +123,42 @@ def extract_log_data(job_id: int) -> Optional[dict]:
         if host_entries:
             return host_entries
         logger.info("AAP log artifacts no disponibles (intento %d/5)...", intento + 1)
+        time.sleep(5)
+    return None
+
+
+def launch_remediation_job(target: str, params: dict) -> dict:
+    extra_vars = {
+        "target":               target,
+        "remediation_mode":     params.get("remediation_mode", "diagnose"),
+        "issue_type":           params.get("issue_type", "auto"),
+        "cpu_kill_threshold":   int(params.get("cpu_kill_threshold", 80)),
+        "ram_kill_threshold":   int(params.get("ram_kill_threshold", 20)),
+        "disk_clean_path":      params.get("disk_clean_path", "/tmp"),
+        "disk_clean_days":      int(params.get("disk_clean_days", 7)),
+    }
+    try:
+        r = requests.post(
+            f"{AWX_URL}/api/v2/job_templates/{REMEDIATION_JOB_TEMPLATE_ID}/launch/",
+            headers=_HEADERS,
+            json={"extra_vars": extra_vars},
+            timeout=10, verify=False,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        logger.error("AAP launch remediation job: %s", e)
+        return {}
+
+
+def extract_remediation_data(job_id: int) -> Optional[dict]:
+    for intento in range(5):
+        job       = aap_get(f"/api/v2/jobs/{job_id}/")
+        artifacts = job.get("artifacts", {})
+        host_entries = {k: v for k, v in artifacts.items()
+                        if isinstance(v, dict) and "status" in v and "diagnosis" in v}
+        if host_entries:
+            return host_entries
+        logger.info("AAP remediation artifacts no disponibles (intento %d/5)...", intento + 1)
         time.sleep(5)
     return None

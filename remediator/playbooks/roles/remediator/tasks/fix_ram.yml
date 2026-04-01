@@ -1,0 +1,53 @@
+---
+# =============================================================================
+# FIX_RAM — Libera memoria: drop_caches + mata proceso Python de stress
+# drop_caches es siempre seguro en Linux (solo libera page/slab cache)
+# =============================================================================
+
+- name: "FIX_RAM | RAM antes de limpiar"
+  ansible.builtin.shell: free -m | awk '/^Mem:/{print $4}'
+  register: _ram_before_mb
+  changed_when: false
+
+- name: "FIX_RAM | Drop page cache (seguro en produccion)"
+  ansible.builtin.shell: |
+    sync
+    echo 3 > /proc/sys/vm/drop_caches
+    echo "ok"
+  register: _drop_cache_result
+  changed_when: true
+
+- name: "FIX_RAM | RAM después de drop_caches"
+  ansible.builtin.shell: free -m | awk '/^Mem:/{print $4}'
+  register: _ram_after_mb
+  changed_when: false
+
+- name: "FIX_RAM | Registrar accion — drop_caches"
+  ansible.builtin.set_fact:
+    _actions: >-
+      {{ _actions + ['RAM: drop_caches ejecutado — liberados ' +
+         ((_ram_after_mb.stdout | int) - (_ram_before_mb.stdout | int)) | abs | string + 'MB de cache'] }}
+
+- name: "FIX_RAM | Matar proceso Python de stress"
+  ansible.builtin.shell: |
+    KILLED=$(pkill -c -f "bytearray.*1024" 2>/dev/null || echo 0)
+    echo "$KILLED"
+  register: _ram_stress_killed
+  changed_when: _ram_stress_killed.stdout | int > 0
+
+- name: "FIX_RAM | Registrar accion — proceso Python"
+  ansible.builtin.set_fact:
+    _actions: "{{ _actions + ['RAM: eliminado proceso Python de stress (' + _ram_stress_killed.stdout + ' proceso(s))'] }}"
+  when: _ram_stress_killed.stdout | int > 0
+
+- name: "FIX_RAM | Listar procesos candidatos por RAM (> {{ _ram_thresh }}%)"
+  ansible.builtin.shell: |
+    ps aux --sort=-%mem | awk -v thr={{ _ram_thresh }} '
+      NR>1 && $4+0 >= thr {print $2, $4"%", $11}
+    ' | head -5
+  register: _ram_candidates
+  changed_when: false
+
+- name: "FIX_RAM | Registrar candidatos en diagnóstico"
+  ansible.builtin.set_fact:
+    _diag: "{{ _diag | combine({'ram_candidates': _ram_candidates.stdout_lines}) }}"

@@ -1,0 +1,105 @@
+---
+# =============================================================================
+# REMEDIATOR | DIAGNOSTICO Y REMEDIACION DE SERVIDORES
+# =============================================================================
+#
+# MODOS (remediation_mode):
+#   diagnose   → recolecta causa raiz, NO toca nada
+#   remediate  → ejecuta la correccion segun issue_type
+#   full       → diagnostica, corrige y verifica resultado
+#
+# PARAMETROS:
+#   target              : host o grupo del inventario        (requerido)
+#   remediation_mode    : diagnose | remediate | full        (default: diagnose)
+#   issue_type          : auto | cpu | ram | disk | all      (default: auto)
+#   cpu_kill_threshold  : %CPU de proceso para ser candidato (default: 80)
+#   ram_kill_threshold  : %RAM de proceso para ser candidato (default: 20)
+#   disk_clean_path     : directorio donde limpiar           (default: /tmp)
+#   disk_clean_days     : borrar archivos mas antiguos que N dias (default: 7)
+#
+# ARTEFACTO publicado:
+#   { hostname: { mode, issue_type, diagnosis, actions_taken,
+#                 disk_freed_mb, pre_metrics, post_metrics, status } }
+# =============================================================================
+
+# =============================================================================
+# PLAY 1: DETECTAR HOSTS ALCANZABLES
+# =============================================================================
+- name: "REMEDIATOR | Detectar hosts alcanzables"
+  hosts: "{{ target | default([]) }}"
+  gather_facts: true
+  ignore_unreachable: true
+
+  tasks:
+    - name: "REMEDIATOR | Marcar alcanzable"
+      ansible.builtin.set_fact:
+        host_is_reachable: true
+      when: ansible_hostname is defined
+
+    - name: "REMEDIATOR | Agregar a grupo reachable"
+      ansible.builtin.group_by:
+        key: reachable_hosts
+      when: host_is_reachable is defined and host_is_reachable
+
+
+# =============================================================================
+# PLAY 2: EJECUTAR ROL EN HOSTS ALCANZABLES
+# =============================================================================
+- name: "REMEDIATOR | Ejecutar en hosts alcanzables"
+  hosts: reachable_hosts
+  gather_facts: true
+  become: true
+  serial: 5
+
+  roles:
+    - role: remediator
+
+
+# =============================================================================
+# PLAY 3: CONSOLIDAR Y PUBLICAR ARTEFACTO
+# =============================================================================
+- name: "REMEDIATOR | Consolidar y publicar artefacto"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: "REMEDIATOR | Construir artefacto"
+      ansible.builtin.set_fact:
+        _remediation_artifact: >-
+          {%- set artifact = {} -%}
+          {%- for host in groups['reachable_hosts'] | default([]) -%}
+            {%- if hostvars[host]._remediation_data is defined -%}
+              {%- set _ = artifact.update({host: hostvars[host]._remediation_data}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set all_hosts = groups[target] | default([target]) if (target is string) else target -%}
+          {%- for host in all_hosts -%}
+            {%- if host not in groups['reachable_hosts'] | default([]) -%}
+              {%- set _ = artifact.update({host: {
+                'hostname': host,
+                'mode': remediation_mode | default('diagnose'),
+                'issue_type': issue_type | default('auto'),
+                'status': 'unreachable',
+                'diagnosis': {},
+                'actions_taken': [],
+                'disk_freed_mb': 0
+              }}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ artifact }}
+
+    - name: "REMEDIATOR | Mostrar consolidacion"
+      ansible.builtin.debug:
+        msg:
+          - "═══════════════════════════════════════════"
+          - "REMEDIATOR | CONSOLIDACION FINAL"
+          - "═══════════════════════════════════════════"
+          - "Alcanzables : {{ groups['reachable_hosts'] | default([]) | length }}"
+          - "Total hosts : {{ _remediation_artifact | length }}"
+          - "═══════════════════════════════════════════"
+
+    - name: "REMEDIATOR | Publicar artefacto en AAP"
+      ansible.builtin.set_stats:
+        data: "{{ _remediation_artifact }}"
+        aggregate: false

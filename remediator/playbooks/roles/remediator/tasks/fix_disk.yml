@@ -1,0 +1,85 @@
+---
+# =============================================================================
+# FIX_DISK — Libera espacio en disco
+# Acciones (en orden de seguridad):
+#   1. Elimina stress_fill.bin si existe
+#   2. Limpia archivos en _disk_path más viejos que _disk_days días
+#   3. Limpia logs de aplicacion rotados (*.gz, *.1, *.2...) en /var/log
+# =============================================================================
+
+- name: "FIX_DISK | Espacio libre antes"
+  ansible.builtin.shell: df -BM {{ _disk_path }} | awk 'NR==2{gsub("M","",$4); print $4}'
+  register: _disk_before_mb
+  changed_when: false
+
+# ── 1. Archivo de stress ──────────────────────────────────────────────────────
+- name: "FIX_DISK | Eliminar archivo de stress si existe"
+  ansible.builtin.file:
+    path: /tmp/stress_fill.bin
+    state: absent
+  register: _stress_fill_removed
+
+- name: "FIX_DISK | Registrar accion — stress_fill.bin"
+  ansible.builtin.set_fact:
+    _actions: "{{ _actions + ['DISK: eliminado /tmp/stress_fill.bin'] }}"
+  when: _stress_fill_removed.changed
+
+# ── 2. Archivos viejos en disk_clean_path ─────────────────────────────────────
+- name: "FIX_DISK | Eliminar archivos de {{ _disk_path }} con más de {{ _disk_days }} días"
+  ansible.builtin.shell: |
+    COUNT=0; SIZE=0
+    while IFS= read -r f; do
+      s=$(du -m "$f" 2>/dev/null | cut -f1)
+      SIZE=$(( SIZE + ${s:-0} ))
+      rm -f "$f" && COUNT=$(( COUNT + 1 ))
+    done < <(find {{ _disk_path }} -maxdepth 3 -type f -mtime +{{ _disk_days }} 2>/dev/null)
+    echo "$COUNT $SIZE"
+  register: _old_files_removed
+  changed_when: _old_files_removed.stdout.split()[0] | int > 0
+
+- name: "FIX_DISK | Registrar accion — archivos viejos"
+  ansible.builtin.set_fact:
+    _actions: >-
+      {{ _actions + ['DISK: eliminados ' + _old_files_removed.stdout.split()[0] +
+         ' archivos con >' + _disk_days | string + ' días en ' + _disk_path +
+         ' (' + _old_files_removed.stdout.split()[1] + 'MB)'] }}
+  when: _old_files_removed.stdout.split()[0] | int > 0
+
+# ── 3. Logs rotados en /var/log ───────────────────────────────────────────────
+- name: "FIX_DISK | Eliminar logs rotados en /var/log (*.gz, *.1, *.2, *.old)"
+  ansible.builtin.shell: |
+    COUNT=0; SIZE=0
+    while IFS= read -r f; do
+      s=$(du -m "$f" 2>/dev/null | cut -f1)
+      SIZE=$(( SIZE + ${s:-0} ))
+      rm -f "$f" && COUNT=$(( COUNT + 1 ))
+    done < <(find /var/log -maxdepth 3 -type f \
+      \( -name "*.gz" -o -name "*.1" -o -name "*.2" -o -name "*.3" \
+         -o -name "*.old" -o -name "*-????????" \) 2>/dev/null)
+    echo "$COUNT $SIZE"
+  register: _rotated_logs_removed
+  changed_when: _rotated_logs_removed.stdout.split()[0] | int > 0
+
+- name: "FIX_DISK | Registrar accion — logs rotados"
+  ansible.builtin.set_fact:
+    _actions: >-
+      {{ _actions + ['DISK: eliminados ' + _rotated_logs_removed.stdout.split()[0] +
+         ' logs rotados en /var/log (' + _rotated_logs_removed.stdout.split()[1] + 'MB)'] }}
+  when: _rotated_logs_removed.stdout.split()[0] | int > 0
+
+# ── Calcular total liberado ───────────────────────────────────────────────────
+- name: "FIX_DISK | Espacio libre después"
+  ansible.builtin.shell: df -BM {{ _disk_path }} | awk 'NR==2{gsub("M","",$4); print $4}'
+  register: _disk_after_mb
+  changed_when: false
+
+- name: "FIX_DISK | Calcular MB liberados"
+  ansible.builtin.set_fact:
+    _disk_freed_mb: "{{ (_disk_after_mb.stdout | int) - (_disk_before_mb.stdout | int) }}"
+
+- name: "FIX_DISK | Sin nada que limpiar"
+  ansible.builtin.set_fact:
+    _actions: "{{ _actions + ['DISK: no se encontro nada que limpiar'] }}"
+  when: not _stress_fill_removed.changed
+        and _old_files_removed.stdout.split()[0] | int == 0
+        and _rotated_logs_removed.stdout.split()[0] | int == 0
