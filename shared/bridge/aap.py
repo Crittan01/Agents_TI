@@ -40,12 +40,12 @@ def aap_get(path: str) -> dict:
 
 
 def host_exists_in_inventory(server: str) -> bool:
-    result = aap_get(f"/api/v2/inventories/{INVENTORY_ID}/hosts/?name={server}&page_size=1")
+    result = aap_get(f"/api/v2/inventories/{INVENTORY_ID}/hosts/?name={server.upper()}&page_size=1")
     return result.get("count", 0) > 0
 
 
 def group_exists_in_inventory(group: str) -> bool:
-    result = aap_get(f"/api/v2/inventories/{INVENTORY_ID}/groups/?name={group}&page_size=1")
+    result = aap_get(f"/api/v2/inventories/{INVENTORY_ID}/groups/?name={group.upper()}&page_size=1")
     return result.get("count", 0) > 0
 
 
@@ -54,7 +54,7 @@ def launch_health_job(target: str) -> dict:
         r = requests.post(
             f"{AWX_URL}/api/v2/job_templates/{HEALTH_JOB_TEMPLATE_ID}/launch/",
             headers=_HEADERS,
-            json={"extra_vars": {"target": target}},
+            json={"extra_vars": {"target": target.upper()}},
             timeout=10, verify=False,
         )
         r.raise_for_status()
@@ -66,7 +66,7 @@ def launch_health_job(target: str) -> dict:
 
 def launch_log_job(target: str, params: dict) -> dict:
     extra_vars = {
-        "app_server_group":      target,
+        "app_server_group":      target.upper(),
         "log_time_window_hours": int(params.get("time_window_hours", 2)),
         "log_severity":          params.get("severity", "ERROR").upper(),
         "log_keyword":           params.get("keyword", ""),
