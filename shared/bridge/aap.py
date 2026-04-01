@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 load_dotenv()
 
-AWX_URL                = os.getenv("AWX_URL", "https://10.216.24.208")
+AWX_URL                = os.getenv("AWX_URL", "https://ol9-awx.lab.com/")
 AWX_TOKEN              = os.getenv("AWX_TOKEN", "")
-HEALTH_JOB_TEMPLATE_ID = int(os.getenv("HEALTH_JOB_TEMPLATE_ID", "178"))
-LOG_JOB_TEMPLATE_ID    = int(os.getenv("LOG_JOB_TEMPLATE_ID",    "179"))
-INVENTORY_ID           = int(os.getenv("INVENTORY_ID", "35"))
+HEALTH_JOB_TEMPLATE_ID = int(os.getenv("HEALTH_JOB_TEMPLATE_ID", "9"))
+LOG_JOB_TEMPLATE_ID    = int(os.getenv("LOG_JOB_TEMPLATE_ID",    "10"))
+INVENTORY_ID           = int(os.getenv("INVENTORY_ID", "2"))
 
 _HEADERS = {
     "Authorization": f"Bearer {AWX_TOKEN}",
