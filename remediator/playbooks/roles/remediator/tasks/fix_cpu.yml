@@ -14,8 +14,9 @@
 
 - name: "FIX_CPU | Matar workers de stress bash"
   ansible.builtin.shell: |
-    KILLED=$(pkill -c -f "end=.*SECONDS" 2>/dev/null || echo 0)
-    echo "$KILLED"
+    COUNT=$(pgrep -c -f "end=.*SECONDS" 2>/dev/null || echo 0)
+    pkill -f "end=.*SECONDS" 2>/dev/null || true
+    echo "$COUNT"
   register: _cpu_stress_killed
   changed_when: _cpu_stress_killed.stdout | int > 0
 

@@ -30,8 +30,9 @@
 
 - name: "FIX_RAM | Matar proceso Python de stress"
   ansible.builtin.shell: |
-    KILLED=$(pkill -c -f "bytearray.*1024" 2>/dev/null || echo 0)
-    echo "$KILLED"
+    COUNT=$(pgrep -c -f "bytearray.*1024" 2>/dev/null || echo 0)
+    pkill -f "bytearray.*1024" 2>/dev/null || true
+    echo "$COUNT"
   register: _ram_stress_killed
   changed_when: _ram_stress_killed.stdout | int > 0
 

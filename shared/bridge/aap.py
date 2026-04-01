@@ -22,7 +22,7 @@ AWX_URL                = os.getenv("AWX_URL", "https://ol9-awx.lab.com/")
 AWX_TOKEN              = os.getenv("AWX_TOKEN", "")
 HEALTH_JOB_TEMPLATE_ID     = int(os.getenv("HEALTH_JOB_TEMPLATE_ID",     "9"))
 LOG_JOB_TEMPLATE_ID        = int(os.getenv("LOG_JOB_TEMPLATE_ID",        "10"))
-REMEDIATION_JOB_TEMPLATE_ID = int(os.getenv("REMEDIATION_JOB_TEMPLATE_ID", "11"))
+REMEDIATION_JOB_TEMPLATE_ID = int(os.getenv("REMEDIATION_JOB_TEMPLATE_ID", "13"))
 INVENTORY_ID               = int(os.getenv("INVENTORY_ID", "2"))
 
 _HEADERS = {

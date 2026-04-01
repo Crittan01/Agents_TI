@@ -16,13 +16,16 @@ def _color(pct: float, warn: int = 70, crit: int = 85) -> str:
     return _GREEN
 
 def _delta_icon(pre: float, post: float) -> str:
+    pre, post = float(pre), float(post)
     if post < pre - 2:  return "↓"
     if post > pre + 2:  return "↑"
     return "→"
 
 
-def _metric_row(label: str, pre: float, post: float | None, unit: str = "%") -> dict:
+def _metric_row(label: str, pre, post=None, unit: str = "%") -> dict:
+    pre = float(pre)
     if post is not None:
+        post  = float(post)
         icon  = _delta_icon(pre, post)
         color = _color(post)
         text  = f"{pre}{unit} {icon} **{post}{unit}**"
@@ -148,9 +151,8 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
                      "text": f"⚠️ {host_data.get('block_error_msg', '')}",
                      "color": _RED, "wrap": True})
 
-    return {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive",
-        "content": {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "version": "1.4", "body": body}}]}
+    return {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.4", "body": body}
 
 
 # =============================================================================
@@ -177,12 +179,12 @@ def build_remediation_group_card(target: str, job_id: int, data: dict) -> dict:
                 {"type": "TextBlock", "text": f"**{hostname}**",
                  "weight": "Bolder"},
                 {"type": "TextBlock",
-                 "text": (f"CPU {pre.get('cpu_pct',0)}% | "
-                          f"RAM {pre.get('ram_pct',0)}% | "
-                          f"Disco {pre.get('disk_pct',0)}%"
-                          + (f" → CPU {post.get('cpu_pct',0)}% | "
-                             f"RAM {post.get('ram_pct',0)}% | "
-                             f"Disco {post.get('disk_pct',0)}%"
+                 "text": (f"CPU {float(pre.get('cpu_pct',0))}% | "
+                          f"RAM {float(pre.get('ram_pct',0))}% | "
+                          f"Disco {float(pre.get('disk_pct',0))}%"
+                          + (f" → CPU {float(post.get('cpu_pct',0))}% | "
+                             f"RAM {float(post.get('ram_pct',0))}% | "
+                             f"Disco {float(post.get('disk_pct',0))}%"
                              if post else "")),
                  "isSubtle": True, "wrap": True, "spacing": "None"},
                 {"type": "TextBlock",
@@ -201,9 +203,8 @@ def build_remediation_group_card(target: str, job_id: int, data: dict) -> dict:
         ]})
         rows.append({"type": "Separator"})
 
-    return {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive",
-        "content": {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "version": "1.4", "body": rows}}]}
+    return {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.4", "body": rows}
 
 
 # =============================================================================
@@ -216,56 +217,55 @@ def build_remediation_launch_card(target: str, job_id: int,
         "remediate": "🛠️ Ejecutando correcciones",
         "full":      "🔧 Diagnosticando y corrigiendo",
     }
-    return {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive",
-        "content": {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "version": "1.4", "body": [
-                        {"type": "TextBlock",
-                         "text": f"🔧 Remediador — {target}",
-                         "weight": "Bolder", "size": "Medium"},
-                        {"type": "TextBlock",
-                         "text": mode_labels.get(mode, mode),
-                         "color": "Accent"},
-                        {"type": "FactSet", "facts": [
-                            {"title": "Job ID",  "value": str(job_id)},
-                            {"title": "Destino", "value": target},
-                            {"title": "Modo",    "value": mode.upper()},
-                            {"title": "Issue",   "value": issue.upper()},
-                        ]},
-                        {"type": "TextBlock",
-                         "text": "⏳ Procesando... Los resultados llegarán en breve.",
-                         "isSubtle": True},
-                    ]}}]}
+    return {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.4", "body": [
+                {"type": "TextBlock",
+                 "text": f"🔧 Remediador — {target}",
+                 "weight": "Bolder", "size": "Medium"},
+                {"type": "TextBlock",
+                 "text": mode_labels.get(mode, mode),
+                 "color": "Accent"},
+                {"type": "FactSet", "facts": [
+                    {"title": "Job ID",  "value": str(job_id)},
+                    {"title": "Destino", "value": target},
+                    {"title": "Modo",    "value": mode.upper()},
+                    {"title": "Issue",   "value": issue.upper()},
+                ]},
+                {"type": "TextBlock",
+                 "text": "⏳ Procesando... Los resultados llegarán en breve.",
+                 "isSubtle": True},
+            ]}
 
 
 # =============================================================================
 # CARD: error / host no encontrado
 # =============================================================================
 def build_not_found_card(target: str) -> dict:
-    return {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive",
-        "content": {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "version": "1.4", "body": [
-                        {"type": "TextBlock", "text": "🔧 Remediador",
-                         "weight": "Bolder", "size": "Medium"},
-                        {"type": "TextBlock",
-                         "text": f"❌ Host no encontrado: **{target}**",
-                         "color": _RED},
-                        {"type": "TextBlock",
-                         "text": f"'{target}' no existe en el inventario de AAP. Verifica el nombre.",
-                         "isSubtle": True, "wrap": True},
-                    ]}}]}
+    return {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.4", "body": [
+                {"type": "TextBlock", "text": "🔧 Remediador",
+                 "weight": "Bolder", "size": "Medium"},
+                {"type": "TextBlock",
+                 "text": f"❌ Host no encontrado: **{target}**",
+                 "color": _RED},
+                {"type": "TextBlock",
+                 "text": f"'{target}' no existe en el inventario de AAP. Verifica el nombre.",
+                 "isSubtle": True, "wrap": True},
+            ]}
 
 
 def build_error_card(target: str, job_id: int, msg: str) -> dict:
-    return {"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive",
-        "content": {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "version": "1.4", "body": [
-                        {"type": "TextBlock",
-                         "text": f"🔧 Remediador — {target}  |  Job #{job_id}",
-                         "weight": "Bolder"},
-                        {"type": "TextBlock", "text": f"❌ {msg}",
-                         "color": _RED, "wrap": True},
-                    ]}}]}
+    return {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.4", "body": [
+                {"type": "TextBlock",
+                 "text": f"🔧 Remediador — {target}  |  Job #{job_id}",
+                 "weight": "Bolder"},
+                {"type": "TextBlock", "text": f"❌ {msg}",
+                 "color": _RED, "wrap": True},
+            ]}
 
 
 def _card_response(card: dict) -> dict:
-    return {"type": "message", "attachments": card.get("attachments", [])}
+    return {"type": "message", "attachments": [
+        {"contentType": "application/vnd.microsoft.card.adaptive", "content": card}
+    ]}
