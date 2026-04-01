@@ -1,0 +1,23 @@
+# Generado automaticamente - NO editar manualmente
+# Fuente: shared/docs/Rutas_de_logs.xlsx
+---
+log_config:
+  servicio: WEBLOGIC_PDN
+  become_user: oracle
+  become_group: oinstall
+  log_paths:
+    - paths:
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs2/logs
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_agenda2/logs
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_agendamas2/logs
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_agendaws2/logs
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_ipsa2/logs
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_ipsaintercambios2/logs
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_ipsapiloto2/logs
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_ipsaprocesos2/logs
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_ipsaversion2/logs
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_saludweb2/logs
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_saludwebin2/logs
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_saludwebmas2/logs
+      patterns:
+        - '*log*'

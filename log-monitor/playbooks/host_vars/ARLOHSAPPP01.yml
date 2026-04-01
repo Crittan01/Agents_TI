@@ -1,0 +1,12 @@
+# Generado automaticamente - NO editar manualmente
+# Fuente: shared/docs/Rutas_de_logs.xlsx
+---
+log_config:
+  servicio: WEBLOGIC_PDN
+  become_user: oracle
+  become_group: oinstall
+  log_paths:
+    - paths:
+        - /u01/app/oracle/admin/OHS/12.2.1/ohs/servers/ohs_arl1/logs
+      patterns:
+        - '*log*'

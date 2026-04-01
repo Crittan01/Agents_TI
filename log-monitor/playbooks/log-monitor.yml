@@ -1,0 +1,233 @@
+---
+# =============================================================================
+# LOG-MONITOR | LECTURA DE LOGS DE APLICACION
+# =============================================================================
+#
+# FILOSOFIA:
+#   - Errores de CONFIGURACION  → el playbook PARA completamente (Plays 0-1)
+#   - Errores en SERVIDORES     → continua y reporta (Plays 2-4)
+#
+# FLUJO:
+#   Play 0: Inicializacion
+#   Play 1: Preflight estricto → si falla 1 host, para TODO
+#   Play 2: Detectar alcanzables (ignore_unreachable)
+#   Play 3: Lectura de logs (solo reachable_hosts)
+#   Play 4: Consolidar y publicar artefacto via set_stats
+#
+# PARAMETROS (extra_vars desde el bridge):
+#   app_server_group:      grupo de inventario a procesar
+#   log_time_window_hours: ventana de tiempo en horas (default: 2)
+#   log_severity:          ERROR | WARN | ALL (default: ERROR)
+#   log_keyword:           termino libre de busqueda (default: "")
+#   log_max_sample_lines:  max lineas de muestra (default: 30)
+#
+# ARTEFACTO (AAP set_stats → bridge lo lee via GET /api/v2/jobs/{id}/):
+#   { "hostname": { files_scanned, errors, warns, sample[], status, ... } }
+# =============================================================================
+
+# =============================================================================
+# PLAY 1: PREFLIGHT ESTRICTO
+#
+# Si UN solo host falla la validacion → el playbook PARA completamente.
+# Detecta hosts sin host_vars (centinela __SIN_CONFIGURAR__) y hosts sin rutas.
+# =============================================================================
+- name: "LOG | Preflight - Validar host_vars"
+  hosts: "{{ app_server_group | default([]) }}"
+  gather_facts: false
+
+  tasks:
+    - name: "LOG | [PREFLIGHT] Verificar existencia de host_vars"
+      ansible.builtin.assert:
+        that:
+          - log_config is defined
+          - log_config.servicio is defined
+          - log_config.servicio != '__SIN_CONFIGURAR__'
+        fail_msg: |
+          ════════════════════════════════════════════════════════
+          HOST SIN CONFIGURACION: {{ inventory_hostname }}
+          ════════════════════════════════════════════════════════
+          El host esta en el inventario pero NO tiene host_vars.
+
+          ACCION REQUERIDA — elige una opcion:
+            1. Crear el archivo faltante:
+               playbooks/host_vars/{{ inventory_hostname }}.yml
+            2. Retirar el host del inventario si ya no aplica.
+            3. Si viene del Excel, re-ejecutar la migracion:
+               python3 scripts/migrate_to_hostvars.py
+
+          Fuente de verdad: shared/docs/Rutas_de_logs.xlsx
+
+          El playbook NO continuara hasta que TODOS los hosts
+          del grupo tengan su host_vars correctamente definido.
+          ════════════════════════════════════════════════════════
+        success_msg: "{{ inventory_hostname }} — host_vars encontrado"
+
+    - name: "LOG | [PREFLIGHT] Verificar que hay al menos una ruta configurada"
+      ansible.builtin.assert:
+        that:
+          - log_config.log_paths | default([]) | length > 0
+        fail_msg: |
+          ════════════════════════════════════════════════════════
+          HOST SIN RUTAS: {{ inventory_hostname }}
+          ════════════════════════════════════════════════════════
+          El host tiene host_vars pero log_config.log_paths esta vacio.
+
+            log_paths: {{ log_config.log_paths | default([]) | length }} entradas
+
+          ACCION REQUERIDA — elige una opcion:
+            1. Verificar en Rutas_de_logs.xlsx que el host tenga rutas
+               asignadas y re-ejecutar: python3 scripts/migrate_to_hostvars.py
+            2. Configurar manualmente en:
+               playbooks/host_vars/{{ inventory_hostname }}.yml
+            3. Retirar el host del inventario si no aplica.
+
+          El playbook NO continuara hasta que TODOS los hosts
+          tengan al menos una ruta configurada.
+          ════════════════════════════════════════════════════════
+        success_msg: "{{ inventory_hostname }} — {{ log_config.log_paths | length }} grupo(s) de rutas"
+
+    - name: "LOG | [PREFLIGHT] Resumen OK"
+      ansible.builtin.debug:
+        msg:
+          - "{{ inventory_hostname }}"
+          - "  Servicio:     {{ log_config.servicio }}"
+          - "  Grupos rutas: {{ log_config.log_paths | length }}"
+
+
+# =============================================================================
+# PLAY 2: DETECTAR HOSTS ALCANZABLES
+# =============================================================================
+- name: "LOG | Detectar hosts alcanzables"
+  hosts: "{{ app_server_group | default([]) }}"
+  gather_facts: true
+  ignore_unreachable: true
+
+  tasks:
+    - name: "LOG | Marcar host como alcanzable"
+      ansible.builtin.set_fact:
+        host_is_reachable: true
+      when: ansible_hostname is defined
+
+    - name: "LOG | Agregar a grupo de hosts alcanzables"
+      ansible.builtin.group_by:
+        key: reachable_hosts
+      when: host_is_reachable is defined and host_is_reachable
+
+    # NOTA: El registro de hosts unreachable se hace en Play 4 (consolidacion),
+    # comparando el grupo original contra groups['reachable_hosts'].
+    # La acumulacion con delegate_facts aqui causaba race condition cuando
+    # multiples hosts eran inalcanzables en paralelo.
+
+    - name: "LOG | Log — host alcanzable"
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} — alcanzable"
+      when: host_is_reachable is defined
+
+    - name: "LOG | Log — host unreachable"
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} — NO alcanzable, se incluira en artefacto como unreachable"
+      when: host_is_reachable is not defined
+
+
+# =============================================================================
+# PLAY 3: LECTURA DE LOGS (SOLO HOSTS ALCANZABLES)
+# =============================================================================
+- name: "LOG | Lectura de logs de aplicacion"
+  hosts: reachable_hosts
+  gather_facts: true
+  serial: 10
+
+  roles:
+    - role: log_monitor
+
+
+# =============================================================================
+# PLAY 4: CONSOLIDAR Y PUBLICAR ARTEFACTO
+#
+# Reune resultados de hosts alcanzables (hostvars._log_data) y construye
+# entradas sinteticas para hosts unreachable.
+# Publica todo via set_stats para que el bridge pueda leer el artefacto
+# desde GET /api/v2/jobs/{id}/ → response.artifacts
+# =============================================================================
+- name: "LOG | Consolidar y publicar artefacto"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # PASO 1: Reconstruir unreachable_hosts comparando el grupo original
+    # contra groups['reachable_hosts'].
+    # -------------------------------------------------------------------------
+    - name: "LOG | Reconstruir lista de hosts unreachable"
+      ansible.builtin.set_fact:
+        unreachable_hosts: >-
+          {%- set result = [] -%}
+          {%- set reachable = groups['reachable_hosts'] | default([]) -%}
+          {%- set all_hosts = app_server_group
+              if (app_server_group is iterable and app_server_group is not string)
+              else groups[app_server_group] | default([]) -%}
+          {%- for host in all_hosts -%}
+            {%- if host not in reachable -%}
+              {%- set hv = hostvars[host] -%}
+              {%- set _ = result.append({
+                'hostname':          host,
+                'servicio':          hv.log_config.servicio | default('N/A'),
+                'unreachable':       true,
+                'block_error':       false,
+                'block_error_msg':   None,
+                'files_scanned':     0,
+                'errors':            0,
+                'warns':             0,
+                'sample':            [],
+                'time_window_hours': log_time_window_hours | default(2) | int,
+                'severity':          log_severity | default('ERROR'),
+                'keyword':           log_keyword | default(''),
+                'status':            'unreachable'
+              }) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ result }}
+
+    # -------------------------------------------------------------------------
+    # PASO 2: Construir el dict completo { hostname: result_dict }
+    # -------------------------------------------------------------------------
+    - name: "LOG | Consolidar todos los resultados"
+      ansible.builtin.set_fact:
+        _all_log_artifact: >-
+          {%- set artifact = {} -%}
+          {%- for host in groups['reachable_hosts'] | default([]) -%}
+            {%- if hostvars[host]._log_data is defined -%}
+              {%- set _ = artifact.update({host: hostvars[host]._log_data}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- for entry in unreachable_hosts | default([]) -%}
+            {%- set _ = artifact.update({entry.hostname: entry}) -%}
+          {%- endfor -%}
+          {{ artifact }}
+
+    - name: "LOG | Mostrar consolidacion"
+      ansible.builtin.debug:
+        msg:
+          - "═══════════════════════════════════════════"
+          - "LOG-MONITOR | CONSOLIDACION FINAL"
+          - "═══════════════════════════════════════════"
+          - "Alcanzables:  {{ groups['reachable_hosts'] | default([]) | length }}"
+          - "Unreachable:  {{ unreachable_hosts | default([]) | length }}"
+          - "Total:        {{ _all_log_artifact | length }}"
+          - "═══════════════════════════════════════════"
+
+    # -------------------------------------------------------------------------
+    # PASO 3: Publicar artefacto via set_stats
+    # El bridge lee: GET /api/v2/jobs/{id}/ → response.artifacts
+    # -------------------------------------------------------------------------
+    - name: "LOG | Publicar artefacto en AAP"
+      ansible.builtin.set_stats:
+        data: "{{ _all_log_artifact }}"
+        aggregate: false
+
+    - name: "LOG | Ejecucion completada"
+      ansible.builtin.debug:
+        msg:
+          - "Artefacto publicado con {{ _all_log_artifact | length }} host(s)"
+          - "El bridge puede leer los resultados via AAP artifacts"

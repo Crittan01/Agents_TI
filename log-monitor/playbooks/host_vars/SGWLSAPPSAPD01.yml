@@ -1,0 +1,12 @@
+# Generado automaticamente - NO editar manualmente
+# Fuente: shared/docs/Rutas_de_logs.xlsx
+---
+log_config:
+  servicio: WEBLOGIC_DLLO
+  become_user: oracle
+  become_group: oinstall
+  log_paths:
+    - paths:
+        - /u01/app/oracle/admin/12.2.1/SAP_DLLO_Domain/servers
+      patterns:
+        - '*.out*'

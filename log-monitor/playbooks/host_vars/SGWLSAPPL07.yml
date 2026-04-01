@@ -1,0 +1,13 @@
+# Generado automaticamente - NO editar manualmente
+# Fuente: shared/docs/Rutas_de_logs.xlsx
+---
+log_config:
+  servicio: WEBLOGIC_LAB
+  become_user: oracle
+  become_group: oinstall
+  log_paths:
+    - paths:
+        - /u01/app/oracle/admin/12.2.1/SURA_Func_LAB_Domain1/servers
+      patterns:
+        - '*.log*'
+        - '*.out*'

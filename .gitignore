@@ -1,0 +1,16 @@
+# Credenciales y configuracion local
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Editores
+.vscode/
+*.swp
+*.swo
+
+ansiblebot.log

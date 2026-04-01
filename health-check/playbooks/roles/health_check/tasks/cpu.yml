@@ -1,0 +1,37 @@
+---
+# /proc/stat entrega jiffies acumulados desde el boot.
+# Leemos dos veces con pausa de 1s para obtener uso real (delta).
+
+- name: Primera lectura de /proc/stat
+  ansible.builtin.command:
+    cmd: "grep '^cpu ' /proc/stat"
+  register: cpu_stat_1
+  changed_when: false
+
+- name: Esperar 1 segundo
+  ansible.builtin.pause:
+    seconds: 1
+
+- name: Segunda lectura de /proc/stat
+  ansible.builtin.command:
+    cmd: "grep '^cpu ' /proc/stat"
+  register: cpu_stat_2
+  changed_when: false
+
+- name: Calcular uso de CPU real (delta entre lecturas)
+  ansible.builtin.set_fact:
+    cpu_usage: >-
+      {{
+        (
+          100.0 -
+          (
+            (cpu_stat_2.stdout.split()[4] | int - cpu_stat_1.stdout.split()[4] | int) * 100.0
+            /
+            (
+              (cpu_stat_2.stdout.split()[1:9] | map('int') | sum)
+              -
+              (cpu_stat_1.stdout.split()[1:9] | map('int') | sum)
+            )
+          )
+        ) | round(1)
+      }}

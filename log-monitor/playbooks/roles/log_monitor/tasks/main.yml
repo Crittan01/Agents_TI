@@ -1,0 +1,72 @@
+---
+# =============================================================================
+# ORQUESTACION PRINCIPAL - log_monitor
+# Regla: el playbook NUNCA falla por un host individual.
+# Cada host publica su resultado via _log_data; el playbook consolida en Play 4.
+# =============================================================================
+
+- name: "LOG | Bloque principal - {{ inventory_hostname }}"
+  block:
+    - name: "LOG | Inicializar variables - {{ inventory_hostname }}"
+      ansible.builtin.set_fact:
+        block_error: false
+        block_error_msg: ~
+
+    - name: "LOG | Leer logs - {{ inventory_hostname }}"
+      ansible.builtin.include_tasks:
+        file: read_logs.yml
+
+  rescue:
+    - name: "LOG | Capturar error inesperado - {{ inventory_hostname }}"
+      ansible.builtin.set_fact:
+        block_error: true
+        block_error_msg: "{{ ansible_failed_result.msg | default('Error inesperado en bloque') }}"
+
+    - name: "LOG | Debug error inesperado - {{ inventory_hostname }}"
+      ansible.builtin.debug:
+        msg:
+          - "ERROR CAPTURADO - {{ inventory_hostname }}"
+          - "{{ block_error_msg }}"
+          - "El resultado se publicara con status error"
+
+  always:
+    # -------------------------------------------------------------------------
+    # PASO 1: Construir _log_data con todos los campos que leeran el bridge/NLU.
+    # Nota: log_result puede ser undefined si el modulo fallo completamente.
+    # -------------------------------------------------------------------------
+    - name: "LOG | Construir resultado del host - {{ inventory_hostname }}"
+      ansible.builtin.set_fact:
+        _log_data:
+          hostname: "{{ inventory_hostname }}"
+          servicio: "{{ log_config.servicio | default('N/A') }}"
+          unreachable: false
+          block_error: "{{ block_error | default(false) }}"
+          block_error_msg: "{{ block_error_msg | default(None) }}"
+          files_scanned: "{{ log_result.files_scanned | default(0) | int }}"
+          errors: "{{ log_result.errors | default(0) | int }}"
+          warns: "{{ log_result.warns | default(0) | int }}"
+          sample: "{{ log_result.sample | default([]) }}"
+          time_window_hours: "{{ log_time_window_hours | int }}"
+          severity: "{{ log_severity }}"
+          keyword: "{{ log_keyword | default('') }}"
+          status: >-
+            {{ 'error' if (block_error | default(false))
+               else ('ok' if log_result is defined and log_result.failed is not defined
+               else 'module_error') }}
+      tags: [always]
+
+    # -------------------------------------------------------------------------
+    # PASO 2: STDOUT para el log de ejecucion en AWX
+    # -------------------------------------------------------------------------
+    - name: "LOG | STDOUT resumen - {{ inventory_hostname }}"
+      ansible.builtin.debug:
+        msg:
+          - "Host:          {{ inventory_hostname }}"
+          - "Servicio:      {{ _log_data.servicio }}"
+          - "Ventana:       {{ _log_data.time_window_hours }}h | Severidad: {{ _log_data.severity }}"
+          - "Archivos:      {{ _log_data.files_scanned }}"
+          - "Errores:       {{ _log_data.errors }}"
+          - "Warnings:      {{ _log_data.warns }}"
+          - "Muestra:       {{ _log_data.sample | length }} lineas"
+          - "Estado:         {{ _log_data.status | upper }}"
+      tags: [always]

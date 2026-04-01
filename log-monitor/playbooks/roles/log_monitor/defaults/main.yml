@@ -1,0 +1,19 @@
+---
+# =============================================================================
+# DEFAULTS - Rol log_monitor
+#
+# __SIN_CONFIGURAR__ es el centinela.
+# Si log_config.servicio tiene este valor en runtime significa que el host
+# NO tiene host_vars definido. El Preflight detecta esto y para el playbook.
+# =============================================================================
+log_config:
+  servicio: "__SIN_CONFIGURAR__"
+  become_user: oracle
+  become_group: oinstall
+  log_paths: []
+
+# Parametros de busqueda — sobreescritos via extra_vars desde el bridge
+log_time_window_hours: 2
+log_severity: "ERROR"       # ERROR | WARN | ALL
+log_keyword: ""             # busqueda libre opcional
+log_max_sample_lines: 30    # maximo de lineas de muestra en el artifact

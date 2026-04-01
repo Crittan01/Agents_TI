@@ -1,0 +1,98 @@
+---
+# =============================================================================
+# HEALTH-CHECK | VERIFICACION DE RECURSOS DEL SISTEMA
+# =============================================================================
+#
+# FLUJO:
+#   Play 1: Detectar hosts alcanzables (ignore_unreachable)
+#   Play 2: Verificar CPU / RAM / Disco (solo hosts alcanzables)
+#   Play 3: Consolidar y publicar artefacto (incluye entradas unreachable)
+#
+# PARAMETROS (extra_vars desde el bridge):
+#   target: nombre de host o grupo de inventario
+#
+# ARTEFACTO (AAP set_stats → bridge lo lee via GET /api/v2/jobs/{id}/):
+#   { "hostname": { cpu, ram, disks, generated_at, status, unreachable } }
+# =============================================================================
+
+# =============================================================================
+# PLAY 1: DETECTAR HOSTS ALCANZABLES
+# =============================================================================
+- name: "HEALTH | Detectar hosts alcanzables"
+  hosts: "{{ target | default([]) }}"
+  gather_facts: true
+  ignore_unreachable: true
+  become: true
+
+  tasks:
+    - name: "HEALTH | Marcar host como alcanzable"
+      ansible.builtin.set_fact:
+        host_is_reachable: true
+      when: ansible_hostname is defined
+
+    - name: "HEALTH | Agregar a grupo de hosts alcanzables"
+      ansible.builtin.group_by:
+        key: reachable_hosts
+      when: host_is_reachable is defined and host_is_reachable
+
+
+# =============================================================================
+# PLAY 2: VERIFICAR SALUD (SOLO HOSTS ALCANZABLES)
+# =============================================================================
+- name: "HEALTH | Verificar salud del sistema"
+  hosts: reachable_hosts
+  gather_facts: true
+  become: true
+
+  roles:
+    - health_check
+
+
+# =============================================================================
+# PLAY 3: CONSOLIDAR Y PUBLICAR ARTEFACTO
+#
+# Combina resultados de hosts alcanzables (_health_data) con entradas
+# sinteticas para hosts inalcanzables.
+# =============================================================================
+- name: "HEALTH | Consolidar y publicar artefacto"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: "HEALTH | Construir artefacto final"
+      ansible.builtin.set_fact:
+        _health_artifact: >-
+          {%- set artifact = {} -%}
+          {%- set reachable = groups['reachable_hosts'] | default([]) -%}
+          {%- for host in reachable -%}
+            {%- if hostvars[host]._health_data is defined -%}
+              {%- set _ = artifact.update({host: hostvars[host]._health_data}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set all_hosts = (groups[target] if target in groups else [target]) | list -%}
+          {%- for host in all_hosts -%}
+            {%- if host not in reachable -%}
+              {%- set _ = artifact.update({host: {
+                'unreachable':   true,
+                'cpu':           0,
+                'ram':           {'used_percent': 0, 'free_mb': 0, 'total_mb': 0},
+                'disks':         [],
+                'generated_at':  '',
+                'status':        'unreachable'
+              }}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ artifact }}
+
+    - name: "HEALTH | Publicar artefacto en AAP"
+      ansible.builtin.set_stats:
+        data: "{{ _health_artifact }}"
+        aggregate: false
+
+    - name: "HEALTH | Ejecucion completada"
+      ansible.builtin.debug:
+        msg:
+          - "Alcanzables: {{ groups['reachable_hosts'] | default([]) | length }}"
+          - "Unreachable: {{ _health_artifact | dict2items | selectattr('value.unreachable', 'defined') | list | length }}"
+          - "Total:       {{ _health_artifact | length }}"

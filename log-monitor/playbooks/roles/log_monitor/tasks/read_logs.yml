@@ -1,0 +1,17 @@
+---
+# =============================================================================
+# TAREA: Invocar el modulo custom read_logs
+# Ejecuta con become: true (root) — la credencial 51 tiene sudo sin become_user
+# especifico. Root puede leer logs de oracle, wasadmin y apache.
+# =============================================================================
+
+- name: "LOG | Leer logs del sistema - {{ inventory_hostname }}"
+  read_logs:
+    log_paths: "{{ log_config.log_paths }}"
+    time_window_hours: "{{ log_time_window_hours | int }}"
+    severity: "{{ log_severity }}"
+    keyword: "{{ log_keyword }}"
+    max_sample_lines: "{{ log_max_sample_lines | int }}"
+  become: true
+  register: log_result
+  failed_when: false

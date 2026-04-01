@@ -1,0 +1,18 @@
+# Generado automaticamente - NO editar manualmente
+# Fuente: shared/docs/Rutas_de_logs.xlsx
+---
+log_config:
+  servicio: NO_WEBLOGIC_LABO
+  become_user: apache
+  become_group: apache
+  log_paths:
+    - paths:
+        - /opt/app/utils/httpd/httpd/logs/labwww.saludencasa.co
+        - /opt/app/utils/httpd/httpd/logs/colegiosvirtualeslab.arlsura.com
+        - /opt/app/utils/httpd/httpd/logs/docslab.suramericana.com
+        - /opt/app/utils/httpd/httpd/logs/labwww.contingenciaarl.com
+        - /opt/app/utils/httpd/httpd/logs/labwww.dinamicaips.com.co
+        - /opt/app/utils/httpd/httpd/logs/labwww.sssura.com
+        - /opt/app/utils/httpd/httpd/logs/labwww.arlsura.com
+      patterns:
+        - '*_log'

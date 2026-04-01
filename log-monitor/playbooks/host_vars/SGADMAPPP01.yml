@@ -1,0 +1,19 @@
+# Generado automaticamente - NO editar manualmente
+# Fuente: shared/docs/Rutas_de_logs.xlsx
+---
+log_config:
+  servicio: WEBLOGIC_PDN
+  become_user: oracle
+  become_group: oinstall
+  log_paths:
+    - paths:
+        - /u01/app/oracle/admin/12.2.1/Sura_Func_PDN_Domain2/servers
+        - /u01/app/oracle/admin/12.2.1/Sap_PDN_Domain/servers
+        - /u01/app/oracle/admin/12.2.1/SURA_Base_Pdn_Domain/servers
+        - /u01/app/oracle/admin/12.2.1/SBK_Pdn_Domain/servers
+        - /u01/app/oracle/admin/12.2.1/Cotizador_Pdn_Domain/servers
+        - /u01/app/oracle/admin/12.2.1/Soat_PDN_Domain/servers
+        - /u01/app/oracle/admin/12.2.1/Inversiones_PDN_Domain/servers
+        - /u01/app/oracle/admin/12.2.1/Sura_Func_PDN_Domain1/servers
+      patterns:
+        - '*.log*'

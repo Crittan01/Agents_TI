@@ -1,0 +1,16 @@
+# Generado automaticamente - NO editar manualmente
+# Fuente: shared/docs/Rutas_de_logs.xlsx
+---
+log_config:
+  servicio: NO_WEBLOGIC_LABO
+  become_user: wasadmin
+  become_group: wasadmin
+  log_paths:
+    - paths:
+        - /opt/IBM/WebSphere/AppServer/profiles/AppSrv01/logs/AppsArchivoDigital01
+        - /opt/IBM/WebSphere/AppServer/profiles/AppSrv01/logs/AppsArchivoDigital03
+      patterns:
+        - BinaryAudit_srp8wasl01Cell01_srp8wasl01Node01_AppsArchivoDigital01_*
+        - BinaryAudit_srp8wasl01Cell01_srp8wasl01Node01_AppsArchivoDigital03_*
+        - SystemOut_*
+        - SystemErr_*

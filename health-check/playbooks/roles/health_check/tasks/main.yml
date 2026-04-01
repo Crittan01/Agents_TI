@@ -1,0 +1,26 @@
+---
+# tasks file for roles/health_check
+
+- name: Incluir chequeo de CPU
+  ansible.builtin.include_tasks:
+    file: cpu.yml
+
+- name: Incluir chequeo de memoria
+  ansible.builtin.include_tasks:
+    file: memory.yml
+
+- name: Incluir chequeo de discos
+  ansible.builtin.include_tasks:
+    file: disk.yml
+
+- name: Guardar metricas del host como fact local
+  ansible.builtin.set_fact:
+    _health_data:
+      cpu: "{{ cpu_usage | float }}"
+      ram:
+        used_percent: "{{ ram_used_percent | float }}"
+        free_mb: "{{ ram_free | int }}"
+        total_mb: "{{ ram_total | int }}"
+      disks: "{{ disks_health }}"
+      generated_at: "{{ ansible_date_time.iso8601 }}"
+      status: ok

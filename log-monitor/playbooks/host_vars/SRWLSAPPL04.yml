@@ -1,0 +1,16 @@
+# Generado automaticamente - NO editar manualmente
+# Fuente: shared/docs/Rutas_de_logs.xlsx
+---
+log_config:
+  servicio: WEBLOGIC_LAB
+  become_user: oracle
+  become_group: oinstall
+  log_paths:
+    - paths:
+        - /u01/app/oracle/admin/12.2.1/SALUDWEB_Lab_Domain/servers
+        - /u01/app/oracle/admin/12.2.1/IPSA_lab_Domain/servers
+        - /u01/app/oracle/admin/12.2.1/EPS_Lab_Domain/servers
+        - /u01/app/oracle/admin/12.2.1/AGENDA_Lab_Domain/servers
+      patterns:
+        - '*.log*'
+        - '*.out*'

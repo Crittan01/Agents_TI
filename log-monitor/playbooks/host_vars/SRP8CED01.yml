@@ -1,0 +1,13 @@
+# Generado automaticamente - NO editar manualmente
+# Fuente: shared/docs/Rutas_de_logs.xlsx
+---
+log_config:
+  servicio: NO_WEBLOGIC_DESA
+  become_user: wasadmin
+  become_group: wasadmin
+  log_paths:
+    - paths:
+        - /opt/IBM/WebSphere/AppServer/profiles/AppSrv01/logs/Content01
+      patterns:
+        - SystemOut_*
+        - SystemErr_*

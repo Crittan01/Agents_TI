@@ -1,0 +1,12 @@
+---
+# gather_facts: true en el play ya recopiló ansible_memtotal_mb y ansible_memfree_mb
+# No se necesita llamar setup nuevamente
+
+- name: Registrar total y free de RAM desde ansible_facts
+  ansible.builtin.set_fact:
+    ram_total: "{{ ansible_memtotal_mb }}"
+    ram_free: "{{ ansible_memfree_mb }}"
+
+- name: Calcular porcentaje de uso de RAM
+  ansible.builtin.set_fact:
+    ram_used_percent: "{{ (100 - ((ram_free | float / ram_total | float) * 100)) | round(1) }}"

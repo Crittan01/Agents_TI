@@ -1,0 +1,25 @@
+---
+- name: Filtrar discos desde ansible_mounts
+  ansible.builtin.set_fact:
+    disks_parsed: >-
+      {{
+        ansible_mounts
+        | selectattr('size_total', '>', 0)
+        | selectattr('fstype', 'match', '^(ext[2-4]|xfs|btrfs|vfat|nfs4?|cifs|zfs)$')
+        | list
+      }}
+
+- name: Calcular metricas de disco para artefactos
+  ansible.builtin.set_fact:
+    disks_health: >-
+      {%- set result = [] -%}
+      {%- for d in disks_parsed -%}
+      {%- set _ = result.append({
+        'mount':     d.mount,
+        'fstype':    d.fstype,
+        'usage_pct': ((1 - d.size_available / d.size_total) * 100) | round(1),
+        'used_gb':   ((d.size_total - d.size_available) / 1073741824) | round(2),
+        'total_gb':  (d.size_total / 1073741824) | round(2)
+      }) -%}
+      {%- endfor -%}
+      {{ result }}
