@@ -126,9 +126,9 @@
   ansible.builtin.set_fact:
     _disk_freed_mb: "{{ [(_disk_after_mb.stdout | int) - (_disk_before_mb.stdout | int), 0] | max }}"
 
-- name: "FIX_DISK | Sin nada que limpiar"
-  ansible.builtin.set_fact:
-    _actions: "{{ _actions + ['DISK: no se encontró nada que limpiar'] }}"
+- name: "FIX_DISK | Sin nada que limpiar (debug)"
+  ansible.builtin.debug:
+    msg: "DISK: no se encontró nada que limpiar en {{ inventory_hostname }}"
   when:
     - _old_files.stdout.split()[0] | int == 0
     - _rotated_logs.stdout.split()[0] | int == 0

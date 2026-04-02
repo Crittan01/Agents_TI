@@ -24,9 +24,9 @@
   register: _cpu_proc_raw
   changed_when: false
 
-- name: "FIX_CPU | Sin procesos candidatos"
-  ansible.builtin.set_fact:
-    _actions: "{{ _actions + ['CPU: ningún proceso supera el umbral de ' + _cpu_thresh | string + '%'] }}"
+- name: "FIX_CPU | Sin procesos candidatos (debug)"
+  ansible.builtin.debug:
+    msg: "CPU: ningún proceso supera el umbral de {{ _cpu_thresh }}% en {{ inventory_hostname }}"
   when: _cpu_proc_raw.stdout_lines | length == 0
 
 - name: "FIX_CPU | Matar proceso candidato"
@@ -57,9 +57,9 @@
     - item.stdout is defined
     - "'KILLED' in item.stdout"
 
-- name: "FIX_CPU | Todos los candidatos son procesos del sistema"
-  ansible.builtin.set_fact:
-    _actions: "{{ _actions + ['CPU: procesos de alto uso son del sistema — no se eliminaron'] }}"
+- name: "FIX_CPU | Todos los candidatos son del sistema (debug)"
+  ansible.builtin.debug:
+    msg: "CPU: procesos de alto uso son del sistema — no se eliminaron en {{ inventory_hostname }}"
   when:
     - _cpu_proc_raw.stdout_lines | length > 0
     - _cpu_kill_each.results | default([]) | selectattr('stdout', 'search', 'KILLED') | list | length == 0

@@ -92,9 +92,9 @@
     - item.stdout is defined
     - "'KILLED' in item.stdout"
 
-- name: "FIX_RAM | RAM normal tras drop_caches — no se requiere matar procesos"
-  ansible.builtin.set_fact:
-    _actions: "{{ _actions + ['RAM: uso normal tras drop_caches (' + _ram_pct_now.stdout + '%) — sin kill de procesos'] }}"
+- name: "FIX_RAM | RAM normal tras drop_caches (debug)"
+  ansible.builtin.debug:
+    msg: "RAM: uso normal tras drop_caches ({{ _ram_pct_now.stdout }}%) — sin kill de procesos en {{ inventory_hostname }}"
   when: _ram_pct_now.stdout | float < 80
 
 - name: "FIX_RAM | Guardar candidatos en diagnóstico"
