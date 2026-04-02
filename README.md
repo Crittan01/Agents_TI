@@ -49,6 +49,9 @@ Operador (Teams — lenguaje natural)
 
 **Principios de diseño:**
 - Un solo webhook unificado despacha los 3 casos de uso según el intent NLU.
+- Filtrado de recursos end-to-end: el NLU extrae qué recursos se pidieron, el playbook
+  ejecuta solo esos tasks, el artifact solo contiene esas claves, la card solo renderiza
+  lo que llegó.
 - Los errores en servidores individuales no detienen la ejecución global.
 - Hosts no alcanzables siempre aparecen en el resultado, marcados como `unreachable`.
 - Todo configurable vía `.env` — sin credenciales hardcodeadas en código.
@@ -105,7 +108,7 @@ agents/
     │   └── roles/remediator/
     │       └── tasks/
     │           ├── main.yml         ← orquestación + block/rescue/always
-    │           ├── diagnose.yml     ← métricas CPU/RAM/Disco + top procesos
+    │           ├── diagnose.yml     ← métricas CPU/RAM/Disco + top procesos (fase pre y post)
     │           ├── fix_cpu.yml      ← mata procesos con CPU > umbral
     │           ├── fix_ram.yml      ← drop_caches + journal + kill selectivo
     │           └── fix_disk.yml     ← /tmp grandes + logs rotados + journal + DNF + cores
@@ -172,6 +175,8 @@ uvicorn shared.bridge.main:app --host 0.0.0.0 --port 8000 --reload
 cloudflared tunnel --url http://localhost:8000 --protocol http2
 ```
 
+> `--protocol http2` es obligatorio si QUIC está bloqueado por el firewall (error `failed to dial`).
+
 ---
 
 ## Casos de uso <a name="casos"></a>
@@ -189,16 +194,15 @@ AnsibleBot salud de produccion
 AnsibleBot criticos en laboratorio
 ```
 
-**Parámetro `resources`:** el NLU extrae qué recursos se solicitaron.
-El playbook ejecuta **solo** los tasks necesarios y el artifact solo contiene las claves pedidas.
+**Filtrado por recurso — end-to-end:**
 
-| Solicitud | `resources` | Playbook ejecuta | Tarjeta muestra |
-|-----------|------------|-----------------|-----------------|
-| "como esta ol9server1" | `["all"]` | cpu + ram + disk | CPU · RAM · Disco |
-| "dame la RAM" | `["ram"]` | solo memory.yml | solo RAM |
-| "CPU y disco" | `["cpu","disk"]` | cpu + disk | CPU · Disco |
+| Solicitud | `resources` | Playbook ejecuta | Artifact contiene | Card muestra |
+|-----------|------------|-----------------|-------------------|--------------|
+| "como esta ol9server1" | `["all"]` | cpu + ram + disk | cpu, ram, disks | CPU · RAM · Disco |
+| "dame la RAM" | `["ram"]` | solo memory.yml | ram | solo RAM |
+| "CPU y disco" | `["cpu","disk"]` | cpu + disk | cpu, disks | CPU · Disco |
 
-**Umbrales:** Verde < 70% · Amarillo 70–84% · Rojo ≥ 85%
+**Umbrales:** Verde < 70% · Amarillo 70–84% · Rojo >= 85%
 
 **Artifact publicado:**
 ```json
@@ -212,6 +216,8 @@ El playbook ejecuta **solo** los tasks necesarios y el artifact solo contiene la
   }
 }
 ```
+
+> Las claves `cpu`, `ram`, `disks` solo aparecen si fueron solicitadas.
 
 ---
 
@@ -269,8 +275,10 @@ Diagnostica y/o corrige problemas de CPU, RAM y Disco en servidores Linux.
 | Modo | Intent NLU | Qué hace |
 |------|-----------|---------|
 | `diagnose` | `diagnose` | Solo lee métricas y top procesos, sin cambios |
-| `remediate` | `remediate` | Ejecuta las correcciones del issue solicitado |
-| `full` | `full_remediate` | Diagnostica → corrige → toma métricas post |
+| `remediate` | `remediate` | Ejecuta correcciones + captura antes/después |
+| `full` | `full_remediate` | Diagnostica → corrige → métricas post |
+
+> `remediate` y `full` siempre muestran `pre_metrics` (antes) y `post_metrics` (después).
 
 **Ejemplos en Teams:**
 ```
@@ -283,18 +291,21 @@ AnsibleBot revisa y arregla ol9server1     ← full + auto
 ```
 
 **Parámetro `issue_type`:** `cpu` · `ram` · `disk` · `auto`
-Con `auto`, el playbook detecta qué recursos superan el 85% y actúa sobre ellos.
+
+Con `auto`, el playbook detecta qué recursos superan el 85% y actúa solo sobre ellos.
+La card resultante también filtra y muestra únicamente las métricas relevantes al issue resuelto.
 
 **Qué hace cada fixer:**
 
 | Fixer | Acciones |
 |-------|---------|
-| `fix_cpu.yml` | Identifica procesos con CPU > umbral (default 80%), excluye servicios críticos del sistema, mata los candidatos con SIGTERM |
-| `fix_ram.yml` | `drop_caches` (siempre seguro) + `journalctl --vacuum-size=100M` + kill de procesos con alto %MEM si RAM sigue ≥ 80% |
+| `fix_cpu.yml` | Identifica procesos con CPU > umbral (default 80%), excluye servicios críticos, mata candidatos con SIGTERM |
+| `fix_ram.yml` | `drop_caches` (siempre seguro) + `journalctl --vacuum-size=100M` + kill de procesos con alto %MEM si RAM >= 80% post-drop |
 | `fix_disk.yml` | Archivos >500MB en /tmp + archivos viejos en `disk_clean_path` + logs rotados en /var/log + `journalctl --vacuum-time=7d` + `dnf clean all` + core dumps |
 
 **Servicios excluidos del kill (CPU y RAM):**
-`sshd, systemd, auditd, crond, rsyslogd, tuned, polkitd, dbus-daemon, NetworkManager, firewalld, chronyd, uwsgi, uvicorn, cloudflared, python3, ansible`
+`sshd, systemd, auditd, crond, rsyslogd, tuned, polkitd, dbus-daemon, NetworkManager,`
+`firewalld, chronyd, uwsgi, uvicorn, cloudflared, python3, ansible`
 
 **Artifact publicado:**
 ```json
@@ -305,14 +316,14 @@ Con `auto`, el playbook detecta qué recursos superan el 85% y actúa sobre ello
     "issue_type": "disk",
     "actions_taken": ["DISK: eliminados 1 archivo(s) grande(s) en /tmp (3400 MB)"],
     "disk_freed_mb": 3400,
-    "pre_metrics":  {"cpu_pct": "0", "ram_pct": "84.2", "disk_pct": "86"},
-    "post_metrics": {"cpu_pct": "0", "ram_pct": "80.9", "disk_pct": "2"},
+    "pre_metrics":  {"cpu_pct": "0", "ram_pct": "82.1", "disk_pct": "86"},
+    "post_metrics": {"cpu_pct": "1", "ram_pct": "85.1", "disk_pct": "2"},
     "status": "remediated"
   }
 }
 ```
 
-**Estados posibles:** `diagnosed` · `remediated` · `no_action_needed` · `error`
+**Estados posibles:** `diagnosed` · `remediated` · `no_action_needed` · `error` · `unreachable`
 
 ---
 
@@ -336,13 +347,13 @@ Carga el inventario y la convención de nombres en el system prompt para resolve
 {"intent":"log_check","target":"ol9server1","type":"host","time_window_hours":2,"severity":"ERROR","keyword":""}
 {"intent":"log_fleet","targets":["WEBLOGIC_PDN"],"environment":"produccion","time_window_hours":2,"severity":"ERROR"}
 
-// Remediación
+// Remediacion
 {"intent":"diagnose","target":"ol9server1","type":"host","issue_type":"auto"}
 {"intent":"remediate","target":"ol9server1","type":"host","issue_type":"disk"}
 {"intent":"full_remediate","target":"ol9server1","type":"host","issue_type":"auto"}
 
 // Otros
-{"intent":"clarify","question":"¿Te refieres a producción o laboratorio?"}
+{"intent":"clarify","question":"Te refieres a produccion o laboratorio?"}
 {"intent":"unknown"}
 ```
 
