@@ -73,11 +73,18 @@ def build_not_found_card(target: str, target_type: str = "host") -> dict:
     }
 
 
-def build_launch_card(target: str, job_id: Optional[int], target_type: str = "host") -> dict:
-    job_url  = f"{AWX_URL}/#/jobs/playbook/{job_id}/details" if job_id else f"{AWX_URL}/#/jobs"
-    label    = "grupo" if target_type == "group" else "servidor"
-    subtitle = (
-        f"Job #{job_id} lanzado — resultados del {label} llegaran en segundos"
+def build_launch_card(target: str, job_id: Optional[int], target_type: str = "host",
+                      resources: list = None) -> dict:
+    resources = resources or ["all"]
+    job_url   = f"{AWX_URL}/#/jobs/playbook/{job_id}/details" if job_id else f"{AWX_URL}/#/jobs"
+    label     = "grupo" if target_type == "group" else "servidor"
+    if "all" in resources:
+        res_label = "CPU · RAM · Disco"
+    else:
+        _map = {"cpu": "CPU", "ram": "RAM", "disk": "Disco"}
+        res_label = " · ".join(_map.get(r, r.upper()) for r in resources)
+    subtitle  = (
+        f"Job #{job_id} lanzado — verificando {res_label} en {label}"
         if job_id else "Error al lanzar el job"
     )
     return {
@@ -106,36 +113,12 @@ def build_launch_card(target: str, job_id: Optional[int], target_type: str = "ho
 
 
 def build_results_card(target: str, job_id: int, data: dict) -> dict:
-    """Card para un unico servidor. data = {cpu, ram, disks, generated_at}."""
+    """Card para un unico servidor. Renderiza solo los recursos presentes en data."""
     if data.get("unreachable"):
         return build_error_card(target, job_id, "Host no alcanzable durante la ejecucion.")
 
-    cpu       = float(data.get("cpu", 0))
-    ram       = float(data.get("ram", {}).get("used_percent", 0))
-    ram_free  = data.get("ram", {}).get("free_mb", "?")
-    ram_total = data.get("ram", {}).get("total_mb", "?")
-    disks     = data.get("disks", [])
-    job_url   = f"{AWX_URL}/#/jobs/playbook/{job_id}/details"
-    ts        = _fmt_ts(data.get("generated_at", ""))
-
-    disk_rows = []
-    for d in disks:
-        usage_val = float(d.get("usage_pct", 0))
-        disk_rows.append({
-            "type": "ColumnSet",
-            "columns": [
-                {
-                    "type": "Column", "width": "stretch",
-                    "items": [{"type": "TextBlock", "text": d.get("mount", "?"), "wrap": True}],
-                },
-                {
-                    "type": "Column", "width": "auto",
-                    "items": [{"type": "TextBlock",
-                               "text": f"{usage_val}%  ({d.get('used_gb','?')}/{d.get('total_gb','?')} GB)",
-                               "color": color_for(usage_val)}],
-                },
-            ],
-        })
+    job_url = f"{AWX_URL}/#/jobs/playbook/{job_id}/details"
+    ts      = _fmt_ts(data.get("generated_at", ""))
 
     def _metric_row(label: str, value_text: str, pct: float) -> dict:
         return {
@@ -152,10 +135,40 @@ def build_results_card(target: str, job_id: int, data: dict) -> dict:
     body = [
         {"type": "TextBlock", "text": f"Health Report — {target}", "size": "Large", "weight": "Bolder"},
         {"type": "TextBlock", "text": f"Job #{job_id}  |  {ts} COT", "isSubtle": True, "spacing": "Small"},
-        _metric_row("CPU", f"{cpu}%", cpu),
-        _metric_row("RAM", f"{ram}%  ({_mb_to_gb(ram_free)} libres / {_mb_to_gb(ram_total)} total)", ram),
-        {"type": "TextBlock", "text": "Discos", "weight": "Bolder", "spacing": "Medium"},
-    ] + disk_rows
+    ]
+
+    # CPU — solo si fue recolectado
+    if "cpu" in data:
+        cpu = float(data["cpu"])
+        body.append(_metric_row("CPU", f"{cpu}%", cpu))
+
+    # RAM — solo si fue recolectado
+    if "ram" in data:
+        ram       = float(data["ram"].get("used_percent", 0))
+        ram_free  = data["ram"].get("free_mb", "?")
+        ram_total = data["ram"].get("total_mb", "?")
+        body.append(_metric_row(
+            "RAM",
+            f"{ram}%  ({_mb_to_gb(ram_free)} libres / {_mb_to_gb(ram_total)} total)",
+            ram,
+        ))
+
+    # Disco — solo si fue recolectado
+    if "disks" in data and data["disks"]:
+        body.append({"type": "TextBlock", "text": "Discos", "weight": "Bolder", "spacing": "Medium"})
+        for d in data["disks"]:
+            usage_val = float(d.get("usage_pct", 0))
+            body.append({
+                "type": "ColumnSet",
+                "columns": [
+                    {"type": "Column", "width": "stretch",
+                     "items": [{"type": "TextBlock", "text": d.get("mount", "?"), "wrap": True}]},
+                    {"type": "Column", "width": "auto",
+                     "items": [{"type": "TextBlock",
+                                "text": f"{usage_val}%  ({d.get('used_gb','?')}/{d.get('total_gb','?')} GB)",
+                                "color": color_for(usage_val)}]},
+                ],
+            })
 
     return {
         "type": "AdaptiveCard",

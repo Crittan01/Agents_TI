@@ -1,26 +1,52 @@
 ---
 # tasks file for roles/health_check
+#
+# health_resources (extra_var): lista de recursos a verificar.
+#   Valores validos: cpu | ram | disk | all
+#   Ejemplo: ["ram"]  →  solo recolecta y publica RAM
+#   Default:  ["all"] →  comportamiento original (CPU + RAM + Disco)
 
-- name: Incluir chequeo de CPU
-  ansible.builtin.include_tasks:
-    file: cpu.yml
-
-- name: Incluir chequeo de memoria
-  ansible.builtin.include_tasks:
-    file: memory.yml
-
-- name: Incluir chequeo de discos
-  ansible.builtin.include_tasks:
-    file: disk.yml
-
-- name: Guardar metricas del host como fact local
+- name: "HEALTH | Normalizar health_resources"
   ansible.builtin.set_fact:
+    health_resources: "{{ health_resources | default(['all']) }}"
     _health_data:
-      cpu: "{{ cpu_usage | float }}"
-      ram:
-        used_percent: "{{ ram_used_percent | float }}"
-        free_mb: "{{ ram_free | int }}"
-        total_mb: "{{ ram_total | int }}"
-      disks: "{{ disks_health }}"
       generated_at: "{{ ansible_date_time.iso8601 }}"
       status: ok
+
+- name: "HEALTH | Chequeo de CPU"
+  ansible.builtin.include_tasks:
+    file: cpu.yml
+  when: "'cpu' in health_resources or 'all' in health_resources"
+
+- name: "HEALTH | Chequeo de RAM"
+  ansible.builtin.include_tasks:
+    file: memory.yml
+  when: "'ram' in health_resources or 'all' in health_resources"
+
+- name: "HEALTH | Chequeo de Disco"
+  ansible.builtin.include_tasks:
+    file: disk.yml
+  when: "'disk' in health_resources or 'all' in health_resources"
+
+- name: "HEALTH | Agregar CPU al artefacto"
+  ansible.builtin.set_fact:
+    _health_data: "{{ _health_data | combine({'cpu': cpu_usage | float}) }}"
+  when: "'cpu' in health_resources or 'all' in health_resources"
+
+- name: "HEALTH | Preparar dict RAM"
+  ansible.builtin.set_fact:
+    _ram_dict:
+      used_percent: "{{ ram_used_percent | float }}"
+      free_mb: "{{ ram_free | int }}"
+      total_mb: "{{ ram_total | int }}"
+  when: "'ram' in health_resources or 'all' in health_resources"
+
+- name: "HEALTH | Agregar RAM al artefacto"
+  ansible.builtin.set_fact:
+    _health_data: "{{ _health_data | combine({'ram': _ram_dict}) }}"
+  when: "'ram' in health_resources or 'all' in health_resources"
+
+- name: "HEALTH | Agregar discos al artefacto"
+  ansible.builtin.set_fact:
+    _health_data: "{{ _health_data | combine({'disks': disks_health}) }}"
+  when: "'disk' in health_resources or 'all' in health_resources"

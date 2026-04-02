@@ -59,12 +59,16 @@ def group_exists_in_inventory(group: str) -> bool:
     return result.get("count", 0) > 0
 
 
-def launch_health_job(target: str) -> dict:
+def launch_health_job(target: str, resources: list = None) -> dict:
+    extra_vars = {
+        "target":           target,
+        "health_resources": resources if resources else ["all"],
+    }
     try:
         r = requests.post(
             f"{AWX_URL}/api/v2/job_templates/{HEALTH_JOB_TEMPLATE_ID}/launch/",
             headers=_HEADERS,
-            json={"extra_vars": {"target": target}},
+            json={"extra_vars": extra_vars},
             timeout=10, verify=False,
         )
         r.raise_for_status()

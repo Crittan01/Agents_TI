@@ -224,8 +224,11 @@ def wait_and_report_fleet_health(targets: list, environment: str, filter_mode: s
         post_to_teams(card)
 
 
-def wait_and_report_health(job_id: int, target: str, target_type: str) -> None:
-    logger.info("BG-H esperando job #%d para %s (%s)", job_id, target, target_type)
+def wait_and_report_health(job_id: int, target: str, target_type: str,
+                           resources: list = None) -> None:
+    resources = resources or ["all"]
+    logger.info("BG-H esperando job #%d para %s (%s) resources=%s",
+                job_id, target, target_type, resources)
     for _ in range(60):
         time.sleep(5)
         status = aap_get(f"/api/v2/jobs/{job_id}/").get("status", "")
@@ -435,6 +438,7 @@ async def teams_webhook(request: Request, background_tasks: BackgroundTasks):
     if intent == "health_check":
         raw_target  = parsed.get("target", "")
         target_type = parsed.get("type", "host")
+        resources   = parsed.get("resources", ["all"])
 
         if target_type == "group":
             target = raw_target.upper()
@@ -446,12 +450,12 @@ async def teams_webhook(request: Request, background_tasks: BackgroundTasks):
         if not exists:
             return hc._card_response(hc.build_not_found_card(target, target_type))
 
-        resp   = launch_health_job(target)
+        resp   = launch_health_job(target, resources)
         job_id = resp.get("id")
         if job_id:
-            background_tasks.add_task(wait_and_report_health, job_id, target, target_type)
+            background_tasks.add_task(wait_and_report_health, job_id, target, target_type, resources)
 
-        return hc._card_response(hc.build_launch_card(target, job_id, target_type))
+        return hc._card_response(hc.build_launch_card(target, job_id, target_type, resources))
 
     # ── Log fleet ─────────────────────────────────────────────────────────────
     if intent == "log_fleet":

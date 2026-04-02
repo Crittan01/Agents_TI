@@ -96,11 +96,20 @@ _SYSTEM_PROMPT = (
     "  'revisa y arregla todo en ol9server1'           → full_remediate\n"
     "  'hay errores en laboratorio'                    → log_fleet\n"
     "  'salud de laboratorio'                          → fleet_check\n"
-    "  'como esta el disco de P8_DESA'                 → health_check\n"
+    "  'como esta el disco de P8_DESA'                 → health_check  resources=[\"disk\"]\n"
+    "  'solo dame la RAM de ol9server1'                → health_check  resources=[\"ram\"]\n"
+    "  'cpu y disco de ol9server1'                     → health_check  resources=[\"cpu\",\"disk\"]\n"
+    "  'como esta ol9server1'                          → health_check  resources=[\"all\"]\n"
     "  'algo raro en desarrollo'                       → log_fleet\n\n"
     "INTENTS DE SALUD:\n"
     "  fleet_check : ambiente completo\n"
-    "  health_check: grupo especifico o host individual\n\n"
+    "  health_check: grupo especifico o host individual\n"
+    "  Parametro resources: lista de recursos solicitados.\n"
+    "    Valores: cpu | ram | disk | all\n"
+    "    Si el usuario pide solo un recurso → [\"cpu\"], [\"ram\"], [\"disk\"]\n"
+    "    Si pide dos → [\"cpu\",\"ram\"], [\"cpu\",\"disk\"], etc.\n"
+    "    Si pide todo o no especifica → [\"all\"]\n"
+    "    Palabras clave: 'CPU/procesador' → cpu | 'RAM/memoria/memoria RAM' → ram | 'disco/espacio/almacenamiento' → disk\n\n"
     "INTENTS DE LOG:\n"
     "  log_fleet, log_check\n"
     "  Parametros: time_window_hours, severity (ERROR|WARN|ALL), keyword\n\n"
@@ -114,8 +123,10 @@ _SYSTEM_PROMPT = (
     "  unknown : accion no relacionada\n\n"
     "Responde UNICAMENTE con JSON valido en una sola linea, sin markdown.\n\n"
     "FORMATOS (elige exactamente uno):\n"
-    '{"intent":"health_check","target":"NOMBRE","type":"host"}\n'
-    '{"intent":"health_check","target":"NOMBRE","type":"group"}\n'
+    '{"intent":"health_check","target":"NOMBRE","type":"host","resources":["all"]}\n'
+    '{"intent":"health_check","target":"NOMBRE","type":"host","resources":["ram"]}\n'
+    '{"intent":"health_check","target":"NOMBRE","type":"host","resources":["cpu","disk"]}\n'
+    '{"intent":"health_check","target":"NOMBRE","type":"group","resources":["all"]}\n'
     '{"intent":"fleet_check","targets":["G1","G2"],"environment":"produccion|desarrollo|laboratorio","filter":"all|critical"}\n'
     '{"intent":"log_check","target":"NOMBRE","type":"host"}\n'
     '{"intent":"log_check","target":"NOMBRE","type":"group","time_window_hours":2,"severity":"ERROR","keyword":""}\n'
@@ -144,7 +155,8 @@ def _fallback_parse(text: str) -> dict:
     full_kw      = ("revisa y arregla", "diagnostica y corrige", "revisa y corrige")
     log_kw       = ("log", "errores", "hay error", "busca", "ora-", "exception",
                     "outofmemory", "warn", "falla", "fallos")
-    health_kw    = ("cpu", "ram", "disco", "salud", "health", "valida", "revisar", "checa")
+    health_kw    = ("cpu", "ram", "disco", "salud", "health", "valida", "revisar", "checa",
+                    "memoria", "como esta", "como anda", "estado", "recursos")
 
     is_full      = any(kw in lower for kw in full_kw)
     is_remediate = any(kw in lower for kw in remediate_kw) and not is_full
@@ -179,14 +191,27 @@ def _fallback_parse(text: str) -> dict:
                 return {"intent": "log_fleet", "targets": groups, "environment": env}
             return {"intent": "fleet_check", "targets": groups, "environment": env, "filter": "all"}
 
+    # Detectar resources para health_check
+    res_cpu  = any(k in lower for k in ("cpu", "procesador", "procesamiento"))
+    res_ram  = any(k in lower for k in ("ram", "memoria", "memory"))
+    res_disk = any(k in lower for k in ("disco", "disk", "espacio", "almacenamiento"))
+    if res_cpu or res_ram or res_disk:
+        resources = (
+            (["cpu"] if res_cpu  else []) +
+            (["ram"] if res_ram  else []) +
+            (["disk"] if res_disk else [])
+        )
+    else:
+        resources = ["all"]
+
     if candidate in _GROUPS_SET:
         if intent_prefix == "log":
             return {"intent": "log_check", "target": candidate, "type": "group"}
-        return {"intent": "health_check", "target": candidate, "type": "group"}
+        return {"intent": "health_check", "target": candidate, "type": "group", "resources": resources}
     if candidate:
         if intent_prefix == "log":
             return {"intent": "log_check", "target": candidate, "type": "host"}
-        return {"intent": "health_check", "target": candidate, "type": "host"}
+        return {"intent": "health_check", "target": candidate, "type": "host", "resources": resources}
     return {"intent": "unknown"}
 
 
