@@ -106,7 +106,7 @@ def extract_health_data(job_id: int, target: str = "") -> Optional[dict]:
         artifacts = job.get("artifacts", {})
         host_entries = {k: v for k, v in artifacts.items()
                         if k != "health" and isinstance(v, dict)
-                        and ("cpu" in v or v.get("unreachable"))}
+                        and ("cpu" in v or "ram" in v or "disks" in v or v.get("unreachable"))}
         if host_entries:
             return host_entries
         health = artifacts.get("health")
