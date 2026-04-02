@@ -28,10 +28,10 @@ def _metric_row(label: str, pre, post=None, unit: str = "%") -> dict:
         post  = float(post)
         icon  = _delta_icon(pre, post)
         color = _color(post)
-        text  = f"{pre}{unit} {icon} **{post}{unit}**"
+        text  = f"{pre}{unit} {icon} {post}{unit}"
     else:
         color = _color(pre)
-        text  = f"**{pre}{unit}**"
+        text  = f"{pre}{unit}"
     return {
         "type": "ColumnSet",
         "columns": [
@@ -80,13 +80,13 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
         {"type": "ColumnSet", "columns": [
             {"type": "Column", "width": "stretch", "items": [
                 {"type": "TextBlock",
-                 "text": f"Job #{job_id}  |  Modo: **{mode.upper()}**  |  Issue: **{issue.upper()}**",
+                 "text": f"Job #{job_id}  |  Modo: {mode.upper()}  |  Issue: {issue.upper()}",
                  "isSubtle": True, "wrap": True}]},
             {"type": "Column", "width": "auto", "items": [
                 {"type": "TextBlock", "text": badge_text,
                  "color": badge_color, "weight": "Bolder"}]},
         ]},
-        {"type": "Separator"},
+        {"type": "TextBlock", "text": " ", "spacing": "Small"},
     ]
 
     # Métricas antes/después
@@ -107,42 +107,46 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
 
     if freed_mb and int(freed_mb) > 0:
         body.append({"type": "TextBlock",
-                     "text": f"💾 Espacio liberado: **{freed_mb} MB**",
+                     "text": f"💾 Espacio liberado: {freed_mb} MB",
                      "color": _GREEN, "spacing": "Small"})
+
+    def _clean(text: str) -> str:
+        """Elimina tabs y caracteres de control que Teams rechaza."""
+        return str(text).replace("\t", "  ").replace("\r", "").strip()
 
     # Top procesos CPU
     top_cpu = diag.get("top_cpu_procs", [])
     if top_cpu:
-        body.append({"type": "Separator"})
-        body.append({"type": "TextBlock", "text": "🖥️ Top procesos CPU",
+        body.append({"type": "TextBlock", "text": " ", "spacing": "Small"})
+        body.append({"type": "TextBlock", "text": "Top procesos CPU",
                      "weight": "Bolder"})
-        body.append({"type": "TextBlock",
-                     "text": "\n".join(top_cpu[:5]),
-                     "fontType": "Monospace", "wrap": True, "isSubtle": True})
+        for line in top_cpu[:5]:
+            body.append({"type": "TextBlock", "text": _clean(line),
+                         "wrap": True, "isSubtle": True, "spacing": "None"})
 
     # Top procesos RAM
     top_ram = diag.get("top_ram_procs", [])
     if top_ram:
-        body.append({"type": "Separator"})
-        body.append({"type": "TextBlock", "text": "🧠 Top procesos RAM",
+        body.append({"type": "TextBlock", "text": " ", "spacing": "Small"})
+        body.append({"type": "TextBlock", "text": "Top procesos RAM",
                      "weight": "Bolder"})
-        body.append({"type": "TextBlock",
-                     "text": "\n".join(top_ram[:5]),
-                     "fontType": "Monospace", "wrap": True, "isSubtle": True})
+        for line in top_ram[:5]:
+            body.append({"type": "TextBlock", "text": _clean(line),
+                         "wrap": True, "isSubtle": True, "spacing": "None"})
 
     # Archivos grandes
     large = diag.get("large_files", [])
     if large:
-        body.append({"type": "Separator"})
-        body.append({"type": "TextBlock", "text": "📁 Archivos grandes (>100MB)",
+        body.append({"type": "TextBlock", "text": " ", "spacing": "Small"})
+        body.append({"type": "TextBlock", "text": "Archivos grandes (>100MB)",
                      "weight": "Bolder"})
-        body.append({"type": "TextBlock",
-                     "text": "\n".join(large[:5]),
-                     "fontType": "Monospace", "wrap": True, "isSubtle": True})
+        for line in large[:5]:
+            body.append({"type": "TextBlock", "text": _clean(line),
+                         "wrap": True, "isSubtle": True, "spacing": "None"})
 
     # Acciones tomadas
     if actions:
-        body.append({"type": "Separator"})
+        body.append({"type": "TextBlock", "text": " ", "spacing": "Small"})
         body.append({"type": "TextBlock", "text": "🛠️ Acciones ejecutadas",
                      "weight": "Bolder"})
         for action in actions:
@@ -151,7 +155,7 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
 
     # Error
     if host_data.get("block_error"):
-        body.append({"type": "Separator"})
+        body.append({"type": "TextBlock", "text": " ", "spacing": "Small"})
         body.append({"type": "TextBlock",
                      "text": f"⚠️ {host_data.get('block_error_msg', '')}",
                      "color": _RED, "wrap": True})
@@ -168,7 +172,7 @@ def build_remediation_group_card(target: str, job_id: int, data: dict) -> dict:
         {"type": "TextBlock",
          "text": f"🔧 Remediador — {target}  |  Job #{job_id}",
          "weight": "Bolder", "size": "Medium"},
-        {"type": "Separator"},
+        {"type": "TextBlock", "text": " ", "spacing": "Small"},
     ]
 
     for hostname, hd in sorted(data.items()):
@@ -186,7 +190,7 @@ def build_remediation_group_card(target: str, job_id: int, data: dict) -> dict:
 
         rows.append({"type": "ColumnSet", "columns": [
             {"type": "Column", "width": "stretch", "items": [
-                {"type": "TextBlock", "text": f"**{hostname}**",
+                {"type": "TextBlock", "text": hostname,
                  "weight": "Bolder"},
                 {"type": "TextBlock",
                  "text": (f"CPU {cpu_b}% | RAM {ram_b}% | Disco {disk_b}%"
@@ -209,7 +213,7 @@ def build_remediation_group_card(target: str, job_id: int, data: dict) -> dict:
                  "spacing": "None"},
             ]},
         ]})
-        rows.append({"type": "Separator"})
+        rows.append({"type": "TextBlock", "text": " ", "spacing": "Small"})
 
     return {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
             "version": "1.4", "body": rows}
@@ -254,7 +258,7 @@ def build_not_found_card(target: str) -> dict:
                 {"type": "TextBlock", "text": "🔧 Remediador",
                  "weight": "Bolder", "size": "Medium"},
                 {"type": "TextBlock",
-                 "text": f"❌ Host no encontrado: **{target}**",
+                 "text": f"❌ Host no encontrado: {target}",
                  "color": _RED},
                 {"type": "TextBlock",
                  "text": f"'{target}' no existe en el inventario de AAP. Verifica el nombre.",
