@@ -1,52 +1,57 @@
-# Agents — AnsibleBot (Sura / NTT Data)
+# AnsibleBot — Agentes de Automatización Inteligente
 
-Sistema de agentes de automatizacion inteligente sobre **AAP (Ansible Automation Platform)**.
-Cada agente combina un rol Ansible (backend remoto) con una o mas interfaces de usuario
-(bridge Python), conectadas a traves de la API REST de AAP y un modulo NLU basado en Claude.
-
-> Este documento sirve de contexto completo para desarrolladores, operadores y sistemas de IA
-> que necesiten entender, mantener o extender el proyecto.
+Sistema de agentes sobre **AAP / AWX** que permite operar servidores Linux en lenguaje natural
+desde **Microsoft Teams**. El operador escribe una frase libre; un NLU basado en Claude la
+convierte en un job de Ansible, que se ejecuta en el servidor objetivo y devuelve una tarjeta
+Adaptive Card con el resultado.
 
 ---
 
-## Indice
+## Índice
 
-1. [Filosofia del sistema](#filosofia)
+1. [Arquitectura general](#arquitectura)
 2. [Estructura de carpetas](#estructura)
-3. [Recursos compartidos](#shared)
-4. [Patrones tecnicos reutilizables](#patrones)
-5. [Casos de uso](#casos)
-   - [health-check](#health-check)
-   - [log-monitor](#log-monitor)
-6. [Stack tecnologico](#stack)
-7. [Como agregar un nuevo caso de uso](#nuevo-caso)
+3. [Puesta en marcha](#puesta-en-marcha)
+4. [Casos de uso](#casos)
+   - [Health Check](#health-check)
+   - [Log Monitor](#log-monitor)
+   - [Remediador](#remediador)
+5. [NLU — Intents y ejemplos](#nlu)
+6. [Recursos AWX](#recursos-awx)
+7. [Stack tecnológico](#stack)
+8. [Cómo agregar un nuevo caso de uso](#nuevo-caso)
 
 ---
 
-## Filosofia del sistema <a name="filosofia"></a>
+## Arquitectura general <a name="arquitectura"></a>
 
 ```
-Operador (lenguaje natural)
-        |
-        v
-NLU (Claude Haiku) — resuelve intent + target
-        |
-        v
-AAP REST API — lanza job template con extra_vars: {target}
-        |
-        v
-Rol Ansible — ejecuta en servidor(es) Linux, publica artifacts via set_stats
-        |
-        v
-Bridge Python — lee artifacts, presenta resultados (Teams / Streamlit)
+Operador (Teams — lenguaje natural)
+          │
+          ▼
+  Cloudflare Tunnel  ──►  FastAPI /teams/webhook  (shared/bridge/main.py)
+                                    │
+                          HMAC-SHA256 verificado
+                                    │
+                                    ▼
+                          NLU (Claude Haiku)  ──►  intent + target + params
+                                    │
+                                    ▼
+                          AAP REST API  ──►  lanza Job Template con extra_vars
+                                    │
+                                    ▼
+                    Rol Ansible ejecuta en servidor(es) Linux
+                    Publica resultados via  set_stats  →  artifacts
+                                    │
+                                    ▼
+                     Bridge lee artifacts  ──►  Adaptive Card a Teams
 ```
 
-**Principios:**
-- El operador escribe en lenguaje libre, no necesita conocer nombres exactos de servidores.
-- Los errores en servidores individuales NO detienen la ejecucion global — se reportan.
-- Los servidores no alcanzables (unreachable) siempre aparecen en el resultado, marcados.
-- Teams y Streamlit son interfaces **independientes** — el cliente elige una o ambas.
-- El codigo no asume rutas ni credenciales hardcodeadas — todo via `.env` y `host_vars`.
+**Principios de diseño:**
+- Un solo webhook unificado despacha los 3 casos de uso según el intent NLU.
+- Los errores en servidores individuales no detienen la ejecución global.
+- Hosts no alcanzables siempre aparecen en el resultado, marcados como `unreachable`.
+- Todo configurable vía `.env` — sin credenciales hardcodeadas en código.
 
 ---
 
@@ -54,359 +59,371 @@ Bridge Python — lee artifacts, presenta resultados (Teams / Streamlit)
 
 ```
 agents/
-├── README.md                        <- este archivo
+├── README.md
 │
-├── shared/                          <- recursos comunes a todos los agentes
+├── shared/
+│   ├── bridge/                      ← bridge unificado (único webhook)
+│   │   ├── main.py                  ← FastAPI: router de intents + background tasks
+│   │   ├── nlu.py                   ← NLU con Claude Haiku (LLM + fallback keywords)
+│   │   ├── aap.py                   ← cliente REST de AWX
+│   │   ├── .env                     ← credenciales y IDs (no commitear)
+│   │   ├── requirements.txt
+│   │   └── ansiblebot.log
 │   ├── inventory/
-│   │   └── hosts_inventario         <- inventario INI de AAP (hosts + grupos)
+│   │   └── hosts_inventario         ← inventario INI (grupos + hosts)
 │   └── docs/
-│       ├── naming_convention.md     <- convencion de nombres de servidores Sura
-│       ├── Excel_abreviaturas_servidores.xlsx  <- fuente original de la convencion
-│       └── Rutas_de_logs.xlsx       <- rutas de logs por servidor (WebLogic/Joomla/P8)
+│       ├── naming_convention.md     ← convención de nombres de servidores
+│       └── Rutas_de_logs.xlsx       ← catálogo de rutas de logs por servidor
 │
-├── health-check/                    <- Caso de uso 1: Health Check Linux
+├── health-check/
 │   ├── playbooks/
-│   │   ├── health-check.yml         <- playbook principal
-│   │   └── roles/health_check/      <- rol que recolecta CPU/RAM/Disco via /proc + mounts
+│   │   ├── health-check.yml         ← playbook principal (3 plays)
+│   │   └── roles/health_check/
+│   │       └── tasks/
+│   │           ├── main.yml         ← condicional por health_resources
+│   │           ├── cpu.yml          ← delta /proc/stat (1s)
+│   │           ├── memory.yml       ← ansible_memtotal_mb / free_mb
+│   │           └── disk.yml         ← ansible_mounts filtrado por fstype
 │   └── bridge/
-│       ├── aap.py                   <- cliente AAP REST (compartido con Streamlit)
-│       ├── nlu.py                   <- NLU con Claude Haiku
-│       ├── cards.py                 <- constructores Adaptive Cards (Teams only)
-│       ├── main.py                  <- FastAPI endpoint (Teams interface)
-│       ├── app.py                   <- Streamlit UI (Streamlit interface)
-│       ├── .env / .env.example
-│       ├── requirements.txt
-│       └── README.md
+│       └── health_cards.py          ← Adaptive Cards (render condicional por recurso)
 │
-└── log-monitor/                     <- Caso de uso 2: Log Monitor (en diseno)
+├── log-monitor/
+│   ├── playbooks/
+│   │   ├── log-monitor.yml          ← playbook principal (4 plays)
+│   │   ├── group_vars/all.yml       ← rutas base de logs del sistema
+│   │   └── roles/log_monitor/
+│   │       ├── library/read_logs.py ← módulo Ansible custom multihilo
+│   │       └── tasks/
+│   │           ├── main.yml         ← block/rescue/always + set_stats
+│   │           └── read_logs.yml    ← invoca read_logs.py (become: true)
+│   └── bridge/
+│       └── log_cards.py
+│
+└── remediator/
     ├── playbooks/
-    │   ├── log-monitor.yml
-    │   └── roles/log_monitor/
-    │       ├── library/read_logs.py <- modulo Ansible custom (multihilo)
+    │   ├── remediator.yml           ← playbook principal (3 plays)
+    │   └── roles/remediator/
     │       └── tasks/
+    │           ├── main.yml         ← orquestación + block/rescue/always
+    │           ├── diagnose.yml     ← métricas CPU/RAM/Disco + top procesos
+    │           ├── fix_cpu.yml      ← mata procesos con CPU > umbral
+    │           ├── fix_ram.yml      ← drop_caches + journal + kill selectivo
+    │           └── fix_disk.yml     ← /tmp grandes + logs rotados + journal + DNF + cores
     └── bridge/
-        ├── aap.py
-        ├── nlu.py
-        ├── cards.py
-        ├── main.py
-        ├── app.py
-        └── .env.example
+        └── remediator_cards.py
 ```
 
 ---
 
-## Recursos compartidos (`shared/`) <a name="shared"></a>
+## Puesta en marcha <a name="puesta-en-marcha"></a>
 
-### `shared/inventory/hosts_inventario`
+### Requisitos
 
-Inventario INI de AAP. Contiene todos los hosts y grupos del middleware Sura.
-Grupos principales:
+- Python 3.9+
+- Acceso a AWX con token de servicio
+- Clave API de Anthropic (`ANTHROPIC_API_KEY`)
+- Microsoft Teams con Incoming Webhook configurado
+- Cloudflare (para exponer el webhook a Teams)
 
-| Grupo | Tecnologia | Ambiente |
-|---|---|---|
-| `WEBLOGIC_PDN` | Oracle WebLogic | Produccion |
-| `WEBLOGIC_DLLO` | Oracle WebLogic | Desarrollo |
-| `WEBLOGIC_LAB` | Oracle WebLogic | Laboratorio |
-| `JOOMLA_PROD` / `JOOMLA_LABO` | Joomla + Apache HTTPD | Prod / Lab |
-| `P8_PROD` / `P8_DESA` / `P8_LABO` | IBM FileNet P8 + WebSphere | Prod / Desa / Lab |
+### Instalación
 
-Cargado dinamicamente por `nlu.py` via env var `INVENTORY_PATH`.
-
-### `shared/docs/naming_convention.md`
-
-Documento generado desde `Excel_abreviaturas_servidores.xlsx`. Define el patron:
-
-```
-[Unidad][Tecnologia][Funcion][Ambiente][NN]
-Ejemplo: SGWLSAPPP01 = Seguros + WebLogic + APP + Produccion + nodo 01
+```bash
+cd /Ansible/agents
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r shared/bridge/requirements.txt
 ```
 
-Cargado por `nlu.py` via env var `NAMING_CONVENTION_PATH` para que el LLM
-resuelva descripciones libres como "agente SR produccion 3" → `SRWLSAGEP03`.
+### Variables de entorno (`shared/bridge/.env`)
 
-### `shared/docs/Rutas_de_logs.xlsx`
+```env
+# AWX
+AWX_URL=https://ol9-awx.lab.com/
+AWX_TOKEN=<token_de_servicio>
 
-Catalogo de rutas de logs por servidor. Tres hojas:
+# Job Templates
+HEALTH_JOB_TEMPLATE_ID=9
+LOG_JOB_TEMPLATE_ID=10
+REMEDIATION_JOB_TEMPLATE_ID=13
+INVENTORY_ID=2
 
-| Hoja | Tecnologia | Usuario OS | Ruta base |
-|---|---|---|---|
-| `WEBLOGIC` | Oracle WebLogic / OHS | `oracle:oinstall` | `/u01/app/oracle/admin/12.2.1/{Domain}/servers/` |
-| `JOOMLA` | Apache HTTPD + Joomla | `apache:apache` | `/opt/app/utils/httpd/httpd/logs/{sitio}/` |
-| `P8` | IBM WebSphere + FileNet | `wasadmin:wasadmin` | `/opt/IBM/WebSphere/AppServer/profiles/AppSrv01/logs/{server}/` |
+# Teams
+TEAMS_WEBHOOK_URL=https://...office.com/webhookb2/...
+TEAMS_HMAC_TOKEN=<base64_token>
 
-Columnas: `Servidor | Ambiente | Ruta_logs (multilinea) | Extension (multilinea)`.
-Fuente de verdad para generar `host_vars/` del caso de uso `log-monitor`.
+# NLU
+ANTHROPIC_API_KEY=sk-ant-...
 
----
-
-## Patrones tecnicos reutilizables <a name="patrones"></a>
-
-### 1. host_vars por servidor
-
-Cada host tiene su propio `playbooks/host_vars/{HOSTNAME}.yml` con su configuracion.
-Generados automaticamente desde Excel via script `scripts/migrate_to_hostvars.py`.
-Un centinela `__SIN_CONFIGURAR__` permite detectar hosts sin configuracion en preflight.
-
-```yaml
-# Ejemplo: health-check no usa host_vars (target via extra_vars en AAP)
-# Ejemplo: log-monitor (patron tomado de cm03-depuracion-file-system)
-log_config:
-  servicio: WEBLOGIC_PDN
-  become_user: oracle      # referencia, NO usado en become_user (se usa root via sudo)
-  specific_paths:
-    - paths:
-        - /u01/app/oracle/admin/12.2.1/Sura_Func_PDN_Domain1/servers
-      patterns: ['*.log*', '*.out*']
+# Rutas
+INVENTORY_PATH=../inventory/hosts_inventario
+NAMING_CONVENTION_PATH=../docs/naming_convention.md
 ```
 
-### 2. Manejo de hosts no alcanzables (patron cm03)
+### Arranque
 
-Resuelto en dos plays del playbook:
-
-```yaml
-# Play 2: detectar alcanzables
-- hosts: "{{ target }}"
-  gather_facts: true
-  ignore_unreachable: true
-  tasks:
-    - group_by: key=reachable_hosts
-      when: ansible_hostname is defined
-
-# Play 4: reconstruir unreachables comparando grupos
-unreachable_hosts = grupo_original - groups['reachable_hosts']
+**Terminal 1 — API:**
+```bash
+cd /Ansible/agents
+uvicorn shared.bridge.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Los hosts unreachable aparecen en el artifact con `"status": "unreachable"`,
-garantizando que el bridge siempre reciba un resultado completo.
-
-### 3. Publicacion de resultados via set_stats (patron health-check)
-
-```yaml
-- ansible.builtin.set_stats:
-    data:
-      HOSTNAME:
-        cpu: 4.4
-        ram: {used_percent: 77.0, free_mb: 16099, total_mb: 69905}
-        disks: [...]
-        status: ok
+**Terminal 2 — Tunnel:**
+```bash
+cloudflared tunnel --url http://localhost:8000 --protocol http2
 ```
-
-El bridge lee el artifact via `GET /api/v2/jobs/{id}/` → `response.artifacts`.
-**Importante:** AWX puede demorar hasta 25s en publicar artifacts tras finalizar el job.
-El bridge reintenta hasta 5 veces con pausa de 5s.
-
-### 4. Estructura del bridge Python
-
-Cada caso de uso tiene su propio bridge con estos modulos:
-
-| Modulo | Compartido | Descripcion |
-|---|---|---|
-| `aap.py` | Teams + Streamlit | Cliente REST de AAP: `aap_get`, `launch_awx_job`, `extract_health_data`, validacion en inventario |
-| `nlu.py` | Teams + Streamlit | NLU con Claude Haiku — carga inventario + naming convention en system prompt |
-| `cards.py` | Teams only | Constructores de Adaptive Cards para Microsoft Teams |
-| `main.py` | Teams only | FastAPI endpoint + validacion HMAC-SHA256 + background tasks |
-| `app.py` | Streamlit only | UI con sidebar (config + historial), tablas, barras de progreso |
-
-Teams y Streamlit son **independientes** — `app.py` no importa de `cards.py`.
-
-### 5. Elevacion de privilegios
-
-El usuario SSH (credencial AAP ID 51) tiene `sudo` sin contrasena pero **no puede**
-elevar a usuario especifico (`become_user`). Por eso todos los `become_user:` estan
-comentados en los roles — se usa `become: true` que eleva a root directamente.
-Root puede leer archivos de cualquier usuario (oracle, wasadmin, apache).
-
-### 6. NLU — intents disponibles
-
-```json
-{"intent": "health_check", "target": "SGWLSAPPP01", "type": "host"}
-{"intent": "health_check", "target": "WEBLOGIC_PDN", "type": "group"}
-{"intent": "fleet_check",  "targets": ["WEBLOGIC_PDN", "JOOMLA_PROD"],
-                           "environment": "produccion", "filter": "all|critical"}
-{"intent": "clarify",      "question": "pregunta corta al operador"}
-{"intent": "unknown"}
-```
-
-Fallback a parser de palabras clave si `ANTHROPIC_API_KEY` no esta configurada.
 
 ---
 
 ## Casos de uso <a name="casos"></a>
 
-### 1. health-check <a name="health-check"></a>
+### 1. Health Check <a name="health-check"></a>
 
-**Estado:** Activo
-**Descripcion:** Health check de servidores Linux — CPU, RAM, Disco.
-**Documentacion completa:** [`health-check/bridge/README.md`](health-check/bridge/README.md)
+Verifica el estado de CPU, RAM y/o Disco de un host o grupo.
 
-**Flujo:**
-1. Operador escribe en Teams o Streamlit (lenguaje libre o nombre exacto)
-2. NLU resuelve: `health_check` (host/grupo) o `fleet_check` (ambiente completo)
-3. AAP lanza el job template 178 con `extra_vars: {target: NOMBRE}`
-4. Rol `health_check` recolecta metricas via `/proc/stat` (CPU), facts de memoria, `ansible_mounts`
-5. `set_stats` consolida todos los hosts en un unico artifact (`run_once`)
-6. Bridge lee artifacts y presenta: card Teams con colores por umbral / tabla Streamlit con barras
+**Ejemplos en Teams:**
+```
+AnsibleBot como esta ol9server1
+AnsibleBot dame la RAM de ol9server1
+AnsibleBot CPU y disco de ol9server1
+AnsibleBot salud de produccion
+AnsibleBot criticos en laboratorio
+```
 
-**Umbrales:** Verde < 70% | Amarillo 70–84% | Rojo >= 85%
-**Recursos AAP:** Job Template 178 | Inventario 35 | Proyecto 61 | Credencial 51
+**Parámetro `resources`:** el NLU extrae qué recursos se solicitaron.
+El playbook ejecuta **solo** los tasks necesarios y el artifact solo contiene las claves pedidas.
 
-**Limitaciones conocidas:**
-- AWX artifacts pueden demorar ~25s — bridge reintenta x5
-- fleet_check critico pagina cards a 15 filas/card (limite 28KB Teams Incoming Webhook)
-- SSL desactivado en llamadas AAP (`verify=False`) — certificado auto-firmado del cliente
+| Solicitud | `resources` | Playbook ejecuta | Tarjeta muestra |
+|-----------|------------|-----------------|-----------------|
+| "como esta ol9server1" | `["all"]` | cpu + ram + disk | CPU · RAM · Disco |
+| "dame la RAM" | `["ram"]` | solo memory.yml | solo RAM |
+| "CPU y disco" | `["cpu","disk"]` | cpu + disk | CPU · Disco |
 
----
+**Umbrales:** Verde < 70% · Amarillo 70–84% · Rojo ≥ 85%
 
-### 2. log-monitor <a name="log-monitor"></a>
-
-**Estado:** En diseno — no implementado
-**Descripcion:** Consulta de logs de aplicacion en servidores Linux (WebLogic, Joomla, P8).
-
-**Problema que resuelve:**
-Los operadores necesitan revisar errores en logs sin acceso SSH directo.
-La consulta se hace en lenguaje natural desde Teams o Streamlit.
-
-**Fuente de datos:**
-`shared/docs/Rutas_de_logs.xlsx` — catalogo completo de rutas por servidor y tecnologia.
-Un script `scripts/migrate_to_hostvars.py` (adaptar del cm03) genera los `host_vars/`
-automaticamente desde el Excel.
-
-**Intents NLU planeados:**
-
-| Consulta | Intent | Extra params |
-|---|---|---|
-| `¿hay errores en SGWLSAPPP01 hoy?` | `log_errors` | `time_window_hours: 24` |
-| `muestra los ultimos logs de P8_PROD` | `log_tail` | `lines: 20` |
-| `¿hay OutOfMemoryError en produccion?` | `log_search` | `keyword: "OutOfMemoryError"`, `fleet: true` |
-| `¿que paso en WebLogic prod ayer a las 3pm?` | `log_search` | `time_start`, `time_end` |
-
-**Formato del artifact:**
+**Artifact publicado:**
 ```json
 {
-  "SGWLSAPPP01": {
-    "status": "ok",
-    "servicio": "WEBLOGIC_PDN",
-    "window_hours": 2,
-    "files_scanned": 4,
-    "errors": 14,
-    "warns": 3,
-    "sample": [
-      "2026-03-25 10:41:22 ERROR NullPointerException at ...",
-      "2026-03-25 10:38:01 ERROR Connection refused ..."
-    ]
-  },
-  "SGWLSAPPP02": {
-    "status": "unreachable",
-    "errors": 0,
-    "sample": []
+  "ol9server1": {
+    "cpu": 4.4,
+    "ram": {"used_percent": 77.0, "free_mb": 1200, "total_mb": 8192},
+    "disks": [{"mount": "/", "usage_pct": 42.0, "used_gb": 12.1, "total_gb": 28.7}],
+    "generated_at": "2026-04-02T14:00:00",
+    "status": "ok"
   }
 }
 ```
 
-**Rol Ansible planeado:**
+---
 
+### 2. Log Monitor <a name="log-monitor"></a>
+
+Escanea logs del sistema y de aplicación en busca de errores, warnings o palabras clave.
+
+**Ejemplos en Teams:**
 ```
-roles/log_monitor/
-├── library/
-│   └── read_logs.py        <- modulo custom multihilo (como delete_files.py en cm03)
-│                              Params: paths, patterns, time_window_hours, severity, keyword
-│                              Output: {files_scanned, errors, warns, sample[max 50 lineas]}
-└── tasks/
-    ├── main.yml            <- bloque/rescue/always + set_stats
-    ├── read_logs.yml       <- invoca read_logs.py con become: true (root)
-    └── unreachable.yml     <- marcado de hosts no alcanzables
+AnsibleBot hay errores en ol9server1
+AnsibleBot busca errores en ol9server1 ultima hora
+AnsibleBot errores en produccion
+AnsibleBot busca OutOfMemory en WEBLOGIC_PDN
 ```
 
-**Patrones reutilizados de cm03-depuracion-file-system:**
-- `host_vars/{HOST}.yml` con centinela `__SIN_CONFIGURAR__`
-- Play 1: Preflight estricto (para si hay hosts sin config)
-- Play 2: `ignore_unreachable` + `group_by: reachable_hosts`
-- Play 4: Reconstruccion de unreachables comparando grupos (evita race condition)
-- `scripts/migrate_to_hostvars.py` — adaptar para Rutas_de_logs.xlsx
-- `become: true` sin `become_user` (root lee todos los archivos)
+**Parámetros:** `time_window_hours` (default 2h) · `severity` (ERROR/WARN/ALL) · `keyword`
 
-**Referencia cm03:**
-`/Ansible/sura/1-automatizaciones-ntt-ansible-app-server-conf/cm03-ansible-depuracion-file-system`
+**Rutas base** (siempre escaneadas, `group_vars/all.yml`):
+```yaml
+base_log_paths:
+  - paths: [/var/log]
+    patterns: ["messages*", "syslog*", "dmesg*"]
+  - paths: [/var/log]
+    patterns: ["secure*", "audit*"]
+```
+
+Rutas adicionales por host en `host_vars/{HOSTNAME}.yml` (desde `Rutas_de_logs.xlsx`).
+Si una ruta no existe en el servidor, se omite silenciosamente y se reporta en `paths_skipped`.
+
+**Artifact publicado:**
+```json
+{
+  "ol9server1": {
+    "hostname": "ol9server1",
+    "files_scanned": 3,
+    "errors": 8,
+    "warns": 0,
+    "sample": ["Apr 2 12:41:09 ol9server1 kernel: RAS: Correctable Errors..."],
+    "paths_skipped": [],
+    "time_window_hours": 2,
+    "severity": "ERROR",
+    "status": "ok"
+  }
+}
+```
 
 ---
 
-## Stack tecnologico <a name="stack"></a>
+### 3. Remediador <a name="remediador"></a>
 
-| Componente | Version | Uso |
-|---|---|---|
-| Python | 3.9+ | Bridge y scripts |
-| FastAPI | 0.128.8 | Endpoint Teams (main.py) |
-| uvicorn | 0.39.0 | Servidor ASGI |
-| Streamlit | >= 1.35.0 | UI web (app.py) |
-| anthropic | >= 0.40.0 | NLU con Claude Haiku |
-| requests | 2.32.5 | Cliente HTTP AAP y Teams |
-| pydantic | 2.12.5 | Validacion de payloads |
-| python-dotenv | 1.2.1 | Variables de entorno |
-| openpyxl | — | Lectura de Excel en scripts |
-| Ansible | — | Playbooks ejecutados en AAP |
-| AAP / AWX | — | Plataforma de automatizacion |
-| Claude Haiku | claude-haiku-4-5-20251001 | Modelo NLU |
+Diagnostica y/o corrige problemas de CPU, RAM y Disco en servidores Linux.
+
+**Modos:**
+
+| Modo | Intent NLU | Qué hace |
+|------|-----------|---------|
+| `diagnose` | `diagnose` | Solo lee métricas y top procesos, sin cambios |
+| `remediate` | `remediate` | Ejecuta las correcciones del issue solicitado |
+| `full` | `full_remediate` | Diagnostica → corrige → toma métricas post |
+
+**Ejemplos en Teams:**
+```
+AnsibleBot diagnostica ol9server1
+AnsibleBot arregla la CPU de ol9server1
+AnsibleBot limpia el disco de ol9server1
+AnsibleBot libera RAM de ol9server1
+AnsibleBot arregla ol9server1              ← issue_type=auto (detecta qué hay alto)
+AnsibleBot revisa y arregla ol9server1     ← full + auto
+```
+
+**Parámetro `issue_type`:** `cpu` · `ram` · `disk` · `auto`
+Con `auto`, el playbook detecta qué recursos superan el 85% y actúa sobre ellos.
+
+**Qué hace cada fixer:**
+
+| Fixer | Acciones |
+|-------|---------|
+| `fix_cpu.yml` | Identifica procesos con CPU > umbral (default 80%), excluye servicios críticos del sistema, mata los candidatos con SIGTERM |
+| `fix_ram.yml` | `drop_caches` (siempre seguro) + `journalctl --vacuum-size=100M` + kill de procesos con alto %MEM si RAM sigue ≥ 80% |
+| `fix_disk.yml` | Archivos >500MB en /tmp + archivos viejos en `disk_clean_path` + logs rotados en /var/log + `journalctl --vacuum-time=7d` + `dnf clean all` + core dumps |
+
+**Servicios excluidos del kill (CPU y RAM):**
+`sshd, systemd, auditd, crond, rsyslogd, tuned, polkitd, dbus-daemon, NetworkManager, firewalld, chronyd, uwsgi, uvicorn, cloudflared, python3, ansible`
+
+**Artifact publicado:**
+```json
+{
+  "ol9server1": {
+    "hostname": "ol9server1",
+    "mode": "remediate",
+    "issue_type": "disk",
+    "actions_taken": ["DISK: eliminados 1 archivo(s) grande(s) en /tmp (3400 MB)"],
+    "disk_freed_mb": 3400,
+    "pre_metrics":  {"cpu_pct": "0", "ram_pct": "84.2", "disk_pct": "86"},
+    "post_metrics": {"cpu_pct": "0", "ram_pct": "80.9", "disk_pct": "2"},
+    "status": "remediated"
+  }
+}
+```
+
+**Estados posibles:** `diagnosed` · `remediated` · `no_action_needed` · `error`
 
 ---
 
-## Como agregar un nuevo caso de uso <a name="nuevo-caso"></a>
+## NLU — Intents y ejemplos <a name="nlu"></a>
 
-### 1. Crear estructura
+El NLU usa Claude Haiku como modelo principal y un parser de palabras clave como fallback.
+Carga el inventario y la convención de nombres en el system prompt para resolver hosts.
 
-```bash
-mkdir -p agents/nombre-caso/playbooks/roles/nombre_rol/tasks
-mkdir -p agents/nombre-caso/bridge
+### Intents disponibles
+
+```json
+// Salud individual / grupo
+{"intent":"health_check","target":"ol9server1","type":"host","resources":["ram"]}
+{"intent":"health_check","target":"WEBLOGIC_PDN","type":"group","resources":["all"]}
+
+// Salud de ambiente completo
+{"intent":"fleet_check","targets":["WEBLOGIC_PDN","JOOMLA_PROD"],"environment":"produccion","filter":"all"}
+{"intent":"fleet_check","targets":["WEBLOGIC_LAB"],"environment":"laboratorio","filter":"critical"}
+
+// Logs
+{"intent":"log_check","target":"ol9server1","type":"host","time_window_hours":2,"severity":"ERROR","keyword":""}
+{"intent":"log_fleet","targets":["WEBLOGIC_PDN"],"environment":"produccion","time_window_hours":2,"severity":"ERROR"}
+
+// Remediación
+{"intent":"diagnose","target":"ol9server1","type":"host","issue_type":"auto"}
+{"intent":"remediate","target":"ol9server1","type":"host","issue_type":"disk"}
+{"intent":"full_remediate","target":"ol9server1","type":"host","issue_type":"auto"}
+
+// Otros
+{"intent":"clarify","question":"¿Te refieres a producción o laboratorio?"}
+{"intent":"unknown"}
 ```
 
-### 2. Bridge Python
+### Reglas de clasificación (orden estricto)
 
-```python
-# aap.py     — copiar de health-check/bridge/aap.py sin cambios
-# nlu.py     — adaptar system prompt y _ENV_GROUPS para el nuevo dominio
-# cards.py   — nuevos constructores de cards para Teams
-# main.py    — adaptar intents del endpoint
-# app.py     — adaptar UI Streamlit
-```
-
-### 3. Paths a shared/
-
-Desde cualquier `bridge/` los paths relativos son:
-```
-../../shared/inventory/hosts_inventario
-../../shared/docs/naming_convention.md
-../../shared/docs/Rutas_de_logs.xlsx
-```
-
-### 4. Playbook — estructura de 4 plays (patron cm03)
-
-```
-Play 0: Inicializacion (localhost)
-Play 1: Preflight estricto — valida host_vars (para si falla 1 host)
-Play 2: Detectar alcanzables (ignore_unreachable + group_by: reachable_hosts)
-Play 3: Ejecucion (solo reachable_hosts) + set_stats
-Play 4: Consolidado en localhost (incluye unreachable en resultado)
-```
-
-### 5. Actualizar este README
-
-Agregar el nuevo caso en la tabla de la seccion [Casos de uso](#casos)
-y documentar: descripcion, flujo, formato de artifact, intents NLU, patrones reutilizados.
+1. **Remediación** — palabras: `limpia, libera, arregla, remedia, corrige, fix, clean`
+2. **Log** — palabras: `errores, logs, busca, ORA-, Exception, OutOfMemory, WARN`
+3. **Salud** — palabras: `CPU, RAM, disco, memoria, salud, como esta, valida, revisar`
+4. Ambigüedad → **Log** (nunca `clarify`, salvo colisión de nombres de host)
 
 ---
 
-## Recursos AAP
+## Recursos AWX <a name="recursos-awx"></a>
 
 | Recurso | ID | Nombre |
 |---|---|---|
-| Job Template health-check | 178 | Agent - Health Check Linux |
-| Inventario | 35 | Inventario Linea Base - Middleware |
-| Proyecto | 61 | Sura_NTT_Data |
-| Credencial SSH | 51 | Machine SSH (sudo sin contrasena, sin become_user especifico) |
-| Organizacion | 5 | Sura_NTT_Data |
-| AAP URL | — | `https://10.216.24.208` |
+| Organización | 2 | Bancolombia |
+| Execution Environment | 2 | — |
+| Credencial SSH | 3 | — |
+| Inventario | 2 | — |
+| Proyecto | 8 | Agents_TI (rama: `develop`) |
+| Job Template Health Check | 9 | Agent - Health Check |
+| Job Template Log Monitor | 10 | Agent - Log Monitor |
+| Job Template Remediador | 13 | Agent - Remediator |
+| AWX URL | — | `https://ol9-awx.lab.com/` |
+| Repositorio | — | `https://github.com/Crittan01/Agents_TI.git` |
 
 ---
 
-## Autor
+## Stack tecnológico <a name="stack"></a>
 
-Cristian Camilo Garzon — crisgrta@suramericana.com.co
+| Componente | Versión | Uso |
+|---|---|---|
+| Python | 3.9 | Bridge y módulos Ansible |
+| FastAPI | 0.128+ | Endpoint /teams/webhook |
+| uvicorn | 0.39+ | Servidor ASGI |
+| anthropic SDK | 0.40+ | NLU con Claude Haiku |
+| requests | 2.32+ | Cliente HTTP AWX y Teams |
+| python-dotenv | 1.2+ | Variables de entorno |
+| Ansible | — | Playbooks en AWX |
+| AWX | — | Plataforma de automatización |
+| Claude Haiku | claude-haiku-4-5-20251001 | Modelo NLU |
+| Cloudflare Tunnel | — | Exposición del webhook a Teams |
+
+---
+
+## Cómo agregar un nuevo caso de uso <a name="nuevo-caso"></a>
+
+### 1. Crear estructura de carpetas
+
+```bash
+mkdir -p agents/nuevo-caso/playbooks/roles/nuevo_rol/tasks
+mkdir -p agents/nuevo-caso/bridge
+```
+
+### 2. Playbook — estructura de 3 plays (patrón del proyecto)
+
+```
+Play 1: Detectar hosts alcanzables (ignore_unreachable + group_by: reachable_hosts)
+Play 2: Ejecutar rol (solo reachable_hosts) — block/rescue/always — set_stats al final
+Play 3: Consolidar en localhost (incluye unreachable en artifact)
+```
+
+### 3. Bridge Python
+
+```
+nuevo-caso/bridge/nuevo_cards.py   ← constructores de Adaptive Cards
+```
+
+En `shared/bridge/`:
+- `nlu.py` — agregar nuevos intents al system prompt y al fallback parser
+- `aap.py` — agregar `launch_nuevo_job()` y `extract_nuevo_data()`
+- `main.py` — agregar handler para el nuevo intent
+
+### 4. AWX
+
+1. Crear Job Template apuntando al playbook nuevo
+2. Agregar `NUEVO_JOB_TEMPLATE_ID` al `.env`
+3. Sync del proyecto desde la rama `develop`
+
+### 5. Actualizar este README
+
+Agregar sección en [Casos de uso](#casos) con:
+descripción · ejemplos de frases · formato del artifact · estados posibles.
