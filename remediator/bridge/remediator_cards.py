@@ -99,11 +99,21 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
     ram_before  = pre.get("ram_pct",  diag.get("ram_pct",  0))
     disk_before = pre.get("disk_pct", diag.get("disk_pct", 0))
 
+    # Determinar qué recursos mostrar según el issue_type
+    # auto/none/all → mostrar todo | cpu/ram/disk → solo el relevante
+    _issues = set(issue.replace(" ", "").split(",")) if issue not in ("auto", "none", "all", "") else {"cpu", "ram", "disk"}
+    show_cpu  = "cpu"  in _issues
+    show_ram  = "ram"  in _issues
+    show_disk = "disk" in _issues
+
     body.append({"type": "TextBlock", "text": "Metricas",
                  "weight": "Bolder", "spacing": "Medium"})
-    body.append(_metric_row("CPU",   cpu_before,  post.get("cpu_pct")  if has_post else None))
-    body.append(_metric_row("RAM",   ram_before,  post.get("ram_pct")  if has_post else None))
-    body.append(_metric_row("Disco", disk_before, post.get("disk_pct") if has_post else None))
+    if show_cpu:
+        body.append(_metric_row("CPU",   cpu_before,  post.get("cpu_pct")  if has_post else None))
+    if show_ram:
+        body.append(_metric_row("RAM",   ram_before,  post.get("ram_pct")  if has_post else None))
+    if show_disk:
+        body.append(_metric_row("Disco", disk_before, post.get("disk_pct") if has_post else None))
 
     if freed_mb and int(freed_mb) > 0:
         body.append({"type": "TextBlock",
@@ -111,12 +121,11 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
                      "color": _GREEN, "spacing": "Small"})
 
     def _clean(text: str) -> str:
-        """Elimina tabs y caracteres de control que Teams rechaza."""
         return str(text).replace("\t", "  ").replace("\r", "").strip()
 
-    # Top procesos CPU
+    # Top procesos CPU — solo si el issue incluye cpu
     top_cpu = diag.get("top_cpu_procs", [])
-    if top_cpu:
+    if top_cpu and show_cpu:
         body.append({"type": "TextBlock", "text": " ", "spacing": "Small"})
         body.append({"type": "TextBlock", "text": "Top procesos CPU",
                      "weight": "Bolder"})
@@ -124,9 +133,9 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
             body.append({"type": "TextBlock", "text": _clean(line),
                          "wrap": True, "isSubtle": True, "spacing": "None"})
 
-    # Top procesos RAM
+    # Top procesos RAM — solo si el issue incluye ram
     top_ram = diag.get("top_ram_procs", [])
-    if top_ram:
+    if top_ram and show_ram:
         body.append({"type": "TextBlock", "text": " ", "spacing": "Small"})
         body.append({"type": "TextBlock", "text": "Top procesos RAM",
                      "weight": "Bolder"})
@@ -134,9 +143,9 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
             body.append({"type": "TextBlock", "text": _clean(line),
                          "wrap": True, "isSubtle": True, "spacing": "None"})
 
-    # Archivos grandes
+    # Archivos grandes — solo si el issue incluye disk
     large = diag.get("large_files", [])
-    if large:
+    if large and show_disk:
         body.append({"type": "TextBlock", "text": " ", "spacing": "Small"})
         body.append({"type": "TextBlock", "text": "Archivos grandes (>100MB)",
                      "weight": "Bolder"})
