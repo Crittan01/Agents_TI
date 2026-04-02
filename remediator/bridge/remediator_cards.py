@@ -89,16 +89,21 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
         {"type": "Separator"},
     ]
 
-    # Métricas (pre vs post si aplica)
+    # Métricas antes/después
+    # pre_metrics = snapshot al inicio del job (correcto para "antes")
+    # post_metrics = snapshot tras la remediación (correcto para "después")
+    # diagnosis.cpu_pct refleja el último diagnóstico, no sirve como "antes"
+    has_pre  = bool(pre)
     has_post = bool(post)
+    cpu_before  = pre.get("cpu_pct",  diag.get("cpu_pct",  0))
+    ram_before  = pre.get("ram_pct",  diag.get("ram_pct",  0))
+    disk_before = pre.get("disk_pct", diag.get("disk_pct", 0))
+
     body.append({"type": "TextBlock", "text": "📊 Métricas",
                  "weight": "Bolder", "spacing": "Medium"})
-    body.append(_metric_row("CPU",   diag.get("cpu_pct", 0),
-                            post.get("cpu_pct") if has_post else None))
-    body.append(_metric_row("RAM",   diag.get("ram_pct", 0),
-                            post.get("ram_pct") if has_post else None))
-    body.append(_metric_row("Disco", diag.get("disk_pct", 0),
-                            post.get("disk_pct") if has_post else None))
+    body.append(_metric_row("CPU",   cpu_before,  post.get("cpu_pct")  if has_post else None))
+    body.append(_metric_row("RAM",   ram_before,  post.get("ram_pct")  if has_post else None))
+    body.append(_metric_row("Disco", disk_before, post.get("disk_pct") if has_post else None))
 
     if freed_mb and int(freed_mb) > 0:
         body.append({"type": "TextBlock",
@@ -174,14 +179,17 @@ def build_remediation_group_card(target: str, job_id: int, data: dict) -> dict:
         actions        = hd.get("actions_taken", [])
         freed          = hd.get("disk_freed_mb", 0)
 
+        diag_h = hd.get("diagnosis", {})
+        cpu_b  = float(pre.get("cpu_pct",  diag_h.get("cpu_pct",  0)))
+        ram_b  = float(pre.get("ram_pct",  diag_h.get("ram_pct",  0)))
+        disk_b = float(pre.get("disk_pct", diag_h.get("disk_pct", 0)))
+
         rows.append({"type": "ColumnSet", "columns": [
             {"type": "Column", "width": "stretch", "items": [
                 {"type": "TextBlock", "text": f"**{hostname}**",
                  "weight": "Bolder"},
                 {"type": "TextBlock",
-                 "text": (f"CPU {float(pre.get('cpu_pct',0))}% | "
-                          f"RAM {float(pre.get('ram_pct',0))}% | "
-                          f"Disco {float(pre.get('disk_pct',0))}%"
+                 "text": (f"CPU {cpu_b}% | RAM {ram_b}% | Disco {disk_b}%"
                           + (f" → CPU {float(post.get('cpu_pct',0))}% | "
                              f"RAM {float(post.get('ram_pct',0))}% | "
                              f"Disco {float(post.get('disk_pct',0))}%"
