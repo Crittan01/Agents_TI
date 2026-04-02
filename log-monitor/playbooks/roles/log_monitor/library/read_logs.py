@@ -109,6 +109,9 @@ def grep_file(filepath: str, grep_pattern: str, keyword: str) -> dict:
 
         lines = proc.stdout.decode("utf-8", errors="replace").splitlines()
 
+        # Excluir lineas generadas por el propio modulo (evita auto-referencia en syslog)
+        lines = [l for l in lines if "ansible-read_logs" not in l]
+
         # Filtrar por keyword si se especifico
         if keyword:
             lines = [l for l in lines if keyword.lower() in l.lower()]
