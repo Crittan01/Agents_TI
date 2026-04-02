@@ -1,54 +1,103 @@
 ---
 # =============================================================================
-# FIX_RAM — Libera memoria: drop_caches + mata proceso Python de stress
-# drop_caches es siempre seguro en Linux (solo libera page/slab cache)
+# FIX_RAM — Libera memoria en orden de agresividad creciente
+#
+# Pasos:
+#   1. Drop page/slab/inode cache  → siempre seguro, no mata procesos
+#   2. Compactar journal systemd   → libera disco y RAM mapeada
+#   3. Si RAM >= 80% post-drop: matar procesos no críticos con alto %MEM
 # =============================================================================
 
-- name: "FIX_RAM | RAM antes de limpiar"
+# ── Paso 1: Drop caches ───────────────────────────────────────────────────────
+- name: "FIX_RAM | RAM libre antes"
   ansible.builtin.shell: free -m | awk '/^Mem:/{print $4}'
-  register: _ram_before_mb
+  register: _ram_free_before
   changed_when: false
 
-- name: "FIX_RAM | Drop page cache (seguro en produccion)"
-  ansible.builtin.shell: |
-    sync
-    echo 3 > /proc/sys/vm/drop_caches
-    echo "ok"
-  register: _drop_cache_result
+- name: "FIX_RAM | Sync + drop_caches (page/slab/inode)"
+  ansible.builtin.shell: sync && echo 3 > /proc/sys/vm/drop_caches
   changed_when: true
 
-- name: "FIX_RAM | RAM después de drop_caches"
+- name: "FIX_RAM | RAM libre después de drop_caches"
   ansible.builtin.shell: free -m | awk '/^Mem:/{print $4}'
-  register: _ram_after_mb
+  register: _ram_free_after_drop
   changed_when: false
 
-- name: "FIX_RAM | Registrar accion — drop_caches"
+- name: "FIX_RAM | Registrar — drop_caches"
   ansible.builtin.set_fact:
-    _actions: >-
-      {{ _actions + ['RAM: drop_caches ejecutado — liberados ' +
-         ((_ram_after_mb.stdout | int) - (_ram_before_mb.stdout | int)) | abs | string + 'MB de cache'] }}
+    _ram_drop_freed: "{{ [(_ram_free_after_drop.stdout | int) - (_ram_free_before.stdout | int), 0] | max }}"
+    _actions: "{{ _actions + ['RAM: drop_caches liberó ' + ([(_ram_free_after_drop.stdout | int) - (_ram_free_before.stdout | int), 0] | max | string) + ' MB de caché'] }}"
 
-- name: "FIX_RAM | Matar proceso Python de stress"
-  ansible.builtin.shell: |
-    COUNT=$(pgrep -c -f "bytearray.*1024" 2>/dev/null || echo 0)
-    pkill -f "bytearray.*1024" 2>/dev/null || true
-    echo "$COUNT"
-  register: _ram_stress_killed
-  changed_when: _ram_stress_killed.stdout | int > 0
+# ── Paso 2: Journal vacuum ────────────────────────────────────────────────────
+- name: "FIX_RAM | Compactar journal (mantener últimos 100MB)"
+  ansible.builtin.shell: journalctl --vacuum-size=100M 2>&1 | tail -1
+  register: _journal_vac
+  changed_when: "'Deleted archived journal' in _journal_vac.stdout"
+  failed_when: false
 
-- name: "FIX_RAM | Registrar accion — proceso Python"
+- name: "FIX_RAM | Registrar — journal vacuum"
   ansible.builtin.set_fact:
-    _actions: "{{ _actions + ['RAM: eliminado proceso Python de stress (' + _ram_stress_killed.stdout + ' proceso(s))'] }}"
-  when: _ram_stress_killed.stdout | int > 0
+    _actions: "{{ _actions + ['RAM: journal compactado — ' + _journal_vac.stdout | trim] }}"
+  when: _journal_vac.changed
 
-- name: "FIX_RAM | Listar procesos candidatos por RAM (> {{ _ram_thresh }}%)"
+# ── Paso 3: Matar procesos con alto %MEM (solo si RAM sigue alta) ─────────────
+- name: "FIX_RAM | %RAM actual post-drop"
+  ansible.builtin.shell: free | awk '/^Mem:/{printf "%.1f", ($3/$2)*100}'
+  register: _ram_pct_now
+  changed_when: false
+
+- name: "FIX_RAM | Obtener PIDs con %MEM > {{ _ram_thresh }}%"
   ansible.builtin.shell: |
     ps aux --sort=-%mem | awk -v thr={{ _ram_thresh }} '
-      NR>1 && $4+0 >= thr {print $2, $4"%", $11}
-    ' | head -5
-  register: _ram_candidates
+      NR>1 && $4+0 >= thr {
+        pid=$2; user=$1; mem=$4; cmd=$11
+        if (cmd ~ /^\[/) next
+        if (pid+0 <= 500) next
+        base=cmd; gsub(".*/","",base)
+        print pid "|" user "|" mem "|" base
+      }
+    ' | head -10
+  register: _ram_proc_raw
   changed_when: false
+  when: _ram_pct_now.stdout | float >= 80
 
-- name: "FIX_RAM | Registrar candidatos en diagnóstico"
+- name: "FIX_RAM | Matar proceso con alto consumo de RAM"
+  ansible.builtin.shell: |
+    PID="{{ item.split('|')[0] }}"
+    USER="{{ item.split('|')[1] }}"
+    MEM="{{ item.split('|')[2] }}"
+    CMD="{{ item.split('|')[3] }}"
+    CRITICAL="sshd|systemd|auditd|crond|rsyslogd|tuned|polkitd|dbus-daemon|NetworkManager|firewalld|chronyd|gssproxy|rpcbind|uwsgi|uvicorn|cloudflared|python3|ansible"
+    if echo "$CMD" | grep -qE "^($CRITICAL)$"; then
+      echo "SKIP|$PID|$CMD"
+    else
+      kill -15 "$PID" 2>/dev/null && echo "KILLED|$PID|$USER|$MEM%|$CMD" || echo "NOPID|$PID|$CMD"
+    fi
+  register: _ram_kill_each
+  loop: "{{ _ram_proc_raw.stdout_lines | default([]) }}"
+  changed_when: "'KILLED' in _ram_kill_each.stdout"
+  when:
+    - _ram_pct_now.stdout | float >= 80
+    - _ram_proc_raw is defined
+    - _ram_proc_raw.stdout_lines | default([]) | length > 0
+
+- name: "FIX_RAM | Registrar procesos RAM eliminados"
   ansible.builtin.set_fact:
-    _diag: "{{ _diag | combine({'ram_candidates': _ram_candidates.stdout_lines}) }}"
+    _actions: >-
+      {{ _actions + ['RAM: eliminado PID ' + item.stdout.split('|')[1] +
+         ' (' + item.stdout.split('|')[2] + ' ' + item.stdout.split('|')[3] + ' ' + item.stdout.split('|')[4] + ')'] }}
+  loop: "{{ _ram_kill_each.results | default([]) }}"
+  when:
+    - _ram_proc_raw is defined
+    - item.stdout is defined
+    - "'KILLED' in item.stdout"
+
+- name: "FIX_RAM | RAM normal tras drop_caches — no se requiere matar procesos"
+  ansible.builtin.set_fact:
+    _actions: "{{ _actions + ['RAM: uso normal tras drop_caches (' + _ram_pct_now.stdout + '%) — sin kill de procesos'] }}"
+  when: _ram_pct_now.stdout | float < 80
+
+- name: "FIX_RAM | Guardar candidatos en diagnóstico"
+  ansible.builtin.set_fact:
+    _diag: "{{ _diag | combine({'ram_candidates': _ram_proc_raw.stdout_lines | default([])}) }}"
+  when: _ram_proc_raw is defined

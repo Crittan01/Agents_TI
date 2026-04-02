@@ -1,35 +1,69 @@
 ---
 # =============================================================================
-# FIX_CPU — Identifica y mata procesos con CPU excesiva
-# Seguro: nunca mata procesos del sistema (PID < 100, root críticos)
+# FIX_CPU — Libera CPU matando procesos que superan el umbral
+#
+# Estrategia:
+#   1. Listar procesos con CPU > _cpu_thresh que no sean del sistema
+#   2. Excluir kernel threads, PID bajos, procesos críticos del sistema
+#   3. Matar los candidatos vía kill -15 (SIGTERM)
+#   4. Registrar cada proceso eliminado
 # =============================================================================
 
-- name: "FIX_CPU | Listar procesos candidatos (CPU > {{ _cpu_thresh }}%)"
+- name: "FIX_CPU | Obtener PIDs con CPU > {{ _cpu_thresh }}%"
   ansible.builtin.shell: |
+    CRITICAL="sshd|systemd|auditd|crond|rsyslogd|tuned|polkitd|dbus-daemon|NetworkManager|firewalld|chronyd|gssproxy|rpcbind|lsmd|sedispatch|accounts-daemon|uwsgi|uvicorn|cloudflared|python3|ansible"
     ps aux --sort=-%cpu | awk -v thr={{ _cpu_thresh }} '
-      NR>1 && $3+0 >= thr && $1 != "root" {print $2, $3"%", $11}
+      NR>1 && $3+0 >= thr {
+        pid=$2; user=$1; cpu=$3; cmd=$11
+        if (cmd ~ /^\[/) next
+        if (pid+0 <= 500) next
+        base=cmd; gsub(".*/","",base)
+        print pid "|" user "|" cpu "|" base
+      }
     ' | head -10
-  register: _cpu_candidates
+  register: _cpu_proc_raw
   changed_when: false
 
-- name: "FIX_CPU | Matar workers de stress bash"
+- name: "FIX_CPU | Sin procesos candidatos"
+  ansible.builtin.set_fact:
+    _actions: "{{ _actions + ['CPU: ningún proceso supera el umbral de ' + _cpu_thresh | string + '%'] }}"
+  when: _cpu_proc_raw.stdout_lines | length == 0
+
+- name: "FIX_CPU | Matar proceso candidato"
   ansible.builtin.shell: |
-    COUNT=$(pgrep -c -f "end=.*SECONDS" 2>/dev/null || echo 0)
-    pkill -f "end=.*SECONDS" 2>/dev/null || true
-    echo "$COUNT"
-  register: _cpu_stress_killed
-  changed_when: _cpu_stress_killed.stdout | int > 0
+    PID="{{ item.split('|')[0] }}"
+    USER="{{ item.split('|')[1] }}"
+    CPU="{{ item.split('|')[2] }}"
+    CMD="{{ item.split('|')[3] }}"
+    CRITICAL="sshd|systemd|auditd|crond|rsyslogd|tuned|polkitd|dbus-daemon|NetworkManager|firewalld|chronyd|gssproxy|rpcbind|lsmd|sedispatch|accounts-daemon|uwsgi|uvicorn|cloudflared|python3|ansible"
+    if echo "$CMD" | grep -qE "^($CRITICAL)$"; then
+      echo "SKIP|$PID|$CMD"
+    else
+      kill -15 "$PID" 2>/dev/null && echo "KILLED|$PID|$USER|$CPU%|$CMD" || echo "NOPID|$PID|$CMD"
+    fi
+  register: _cpu_kill_each
+  loop: "{{ _cpu_proc_raw.stdout_lines }}"
+  changed_when: "'KILLED' in _cpu_kill_each.stdout"
+  when: _cpu_proc_raw.stdout_lines | length > 0
 
-- name: "FIX_CPU | Registrar accion — stress workers"
+- name: "FIX_CPU | Registrar procesos eliminados"
   ansible.builtin.set_fact:
-    _actions: "{{ _actions + ['CPU: eliminados ' + _cpu_stress_killed.stdout + ' worker(s) bash de stress'] }}"
-  when: _cpu_stress_killed.stdout | int > 0
+    _actions: >-
+      {{ _actions + ['CPU: eliminado PID ' + item.stdout.split('|')[1] +
+         ' (' + item.stdout.split('|')[2] + ' ' + item.stdout.split('|')[3] + ' ' + item.stdout.split('|')[4] + ')'] }}
+  loop: "{{ _cpu_kill_each.results | default([]) }}"
+  when:
+    - _cpu_proc_raw.stdout_lines | length > 0
+    - item.stdout is defined
+    - "'KILLED' in item.stdout"
 
-- name: "FIX_CPU | Sin candidatos de stress"
+- name: "FIX_CPU | Todos los candidatos son procesos del sistema"
   ansible.builtin.set_fact:
-    _actions: "{{ _actions + ['CPU: no se encontraron procesos de stress activos'] }}"
-  when: _cpu_stress_killed.stdout | int == 0
+    _actions: "{{ _actions + ['CPU: procesos de alto uso son del sistema — no se eliminaron'] }}"
+  when:
+    - _cpu_proc_raw.stdout_lines | length > 0
+    - _cpu_kill_each.results | default([]) | selectattr('stdout', 'search', 'KILLED') | list | length == 0
 
-- name: "FIX_CPU | Registrar procesos candidatos en diagnóstico"
+- name: "FIX_CPU | Guardar candidatos en diagnóstico"
   ansible.builtin.set_fact:
-    _diag: "{{ _diag | combine({'cpu_candidates': _cpu_candidates.stdout_lines}) }}"
+    _diag: "{{ _diag | combine({'cpu_candidates': _cpu_proc_raw.stdout_lines}) }}"
