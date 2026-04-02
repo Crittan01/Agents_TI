@@ -15,6 +15,26 @@
   register: _disk_before_mb
   changed_when: false
 
+# ── 1b. Archivos grandes en /tmp (>500MB, sin importar edad) ─────────────────
+- name: "FIX_DISK | Eliminar archivos grandes en /tmp (> 500MB)"
+  ansible.builtin.shell: |
+    COUNT=0; SIZE=0
+    while IFS= read -r f; do
+      s=$(du -m "$f" 2>/dev/null | cut -f1)
+      SIZE=$(( SIZE + ${s:-0} ))
+      rm -f "$f" 2>/dev/null && COUNT=$(( COUNT + 1 ))
+    done < <(find /tmp -maxdepth 3 -type f -size +500M 2>/dev/null)
+    echo "$COUNT $SIZE"
+  register: _large_tmp_files
+  changed_when: _large_tmp_files.stdout.split()[0] | int > 0
+
+- name: "FIX_DISK | Registrar — archivos grandes en /tmp"
+  ansible.builtin.set_fact:
+    _actions: >-
+      {{ _actions + ['DISK: eliminados ' + _large_tmp_files.stdout.split()[0] +
+         ' archivo(s) grande(s) en /tmp (' + _large_tmp_files.stdout.split()[1] + ' MB)'] }}
+  when: _large_tmp_files.stdout.split()[0] | int > 0
+
 # ── 1. Archivos viejos en disk_clean_path ─────────────────────────────────────
 - name: "FIX_DISK | Limpiar archivos en {{ _disk_path }} con más de {{ _disk_days }} días"
   ansible.builtin.shell: |
@@ -130,6 +150,7 @@
   ansible.builtin.debug:
     msg: "DISK: no se encontró nada que limpiar en {{ inventory_hostname }}"
   when:
+    - _large_tmp_files.stdout.split()[0] | int == 0
     - _old_files.stdout.split()[0] | int == 0
     - _rotated_logs.stdout.split()[0] | int == 0
     - not _journal_vacuum.changed
