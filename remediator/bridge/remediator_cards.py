@@ -47,13 +47,13 @@ def _metric_row(label: str, pre, post=None, unit: str = "%") -> dict:
 def _status_badge(status: str) -> tuple[str, str]:
     """Devuelve (emoji_texto, color) según el status del artefacto."""
     mapping = {
-        "remediated":       ("✅ REMEDIADO",        _GREEN),
-        "diagnosed":        ("🔍 DIAGNOSTICADO",    _YELLOW),
-        "no_action_needed": ("✅ SIN ACCION",        _GREEN),
-        "error":            ("❌ ERROR",             _RED),
-        "unreachable":      ("🔴 NO ALCANZABLE",     _RED),
+        "remediated":       ("REMEDIADO",        _GREEN),
+        "diagnosed":        ("DIAGNOSTICADO",    _YELLOW),
+        "no_action_needed": ("SIN ACCION",       _GREEN),
+        "error":            ("ERROR",            _RED),
+        "unreachable":      ("NO ALCANZABLE",    _RED),
     }
-    return mapping.get(status, ("⚪ DESCONOCIDO", "Default"))
+    return mapping.get(status, ("DESCONOCIDO", "Default"))
 
 
 # =============================================================================
@@ -75,7 +75,7 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
     body: list[dict] = [
         # Header
         {"type": "TextBlock",
-         "text": f"🔧 Remediador — {target}",
+         "text": f"Remediador — {target}",
          "weight": "Bolder", "size": "Medium"},
         {"type": "ColumnSet", "columns": [
             {"type": "Column", "width": "stretch", "items": [
@@ -99,7 +99,7 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
     ram_before  = pre.get("ram_pct",  diag.get("ram_pct",  0))
     disk_before = pre.get("disk_pct", diag.get("disk_pct", 0))
 
-    body.append({"type": "TextBlock", "text": "📊 Métricas",
+    body.append({"type": "TextBlock", "text": "Metricas",
                  "weight": "Bolder", "spacing": "Medium"})
     body.append(_metric_row("CPU",   cpu_before,  post.get("cpu_pct")  if has_post else None))
     body.append(_metric_row("RAM",   ram_before,  post.get("ram_pct")  if has_post else None))
@@ -107,7 +107,7 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
 
     if freed_mb and int(freed_mb) > 0:
         body.append({"type": "TextBlock",
-                     "text": f"💾 Espacio liberado: {freed_mb} MB",
+                     "text": f"Espacio liberado: {freed_mb} MB",
                      "color": _GREEN, "spacing": "Small"})
 
     def _clean(text: str) -> str:
@@ -147,7 +147,7 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
     # Acciones tomadas
     if actions:
         body.append({"type": "TextBlock", "text": " ", "spacing": "Small"})
-        body.append({"type": "TextBlock", "text": "🛠️ Acciones ejecutadas",
+        body.append({"type": "TextBlock", "text": "Acciones ejecutadas",
                      "weight": "Bolder"})
         for action in actions:
             body.append({"type": "TextBlock", "text": f"• {action}",
@@ -157,7 +157,7 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
     if host_data.get("block_error"):
         body.append({"type": "TextBlock", "text": " ", "spacing": "Small"})
         body.append({"type": "TextBlock",
-                     "text": f"⚠️ {host_data.get('block_error_msg', '')}",
+                     "text": f"ERROR: {host_data.get('block_error_msg', '')}",
                      "color": _RED, "wrap": True})
 
     return {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -170,7 +170,7 @@ def build_remediation_card(target: str, job_id: int, data: dict) -> dict:
 def build_remediation_group_card(target: str, job_id: int, data: dict) -> dict:
     rows: list[dict] = [
         {"type": "TextBlock",
-         "text": f"🔧 Remediador — {target}  |  Job #{job_id}",
+         "text": f"Remediador — {target}  |  Job #{job_id}",
          "weight": "Bolder", "size": "Medium"},
         {"type": "TextBlock", "text": " ", "spacing": "Small"},
     ]
@@ -225,14 +225,14 @@ def build_remediation_group_card(target: str, job_id: int, data: dict) -> dict:
 def build_remediation_launch_card(target: str, job_id: int,
                                   mode: str, issue: str) -> dict:
     mode_labels = {
-        "diagnose":  "🔍 Diagnosticando sin hacer cambios",
-        "remediate": "🛠️ Ejecutando correcciones",
-        "full":      "🔧 Diagnosticando y corrigiendo",
+        "diagnose":  "Diagnosticando sin hacer cambios",
+        "remediate": "Ejecutando correcciones",
+        "full":      "Diagnosticando y corrigiendo",
     }
     return {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
             "version": "1.4", "body": [
                 {"type": "TextBlock",
-                 "text": f"🔧 Remediador — {target}",
+                 "text": f"Remediador — {target}",
                  "weight": "Bolder", "size": "Medium"},
                 {"type": "TextBlock",
                  "text": mode_labels.get(mode, mode),
@@ -244,7 +244,7 @@ def build_remediation_launch_card(target: str, job_id: int,
                     {"title": "Issue",   "value": issue.upper()},
                 ]},
                 {"type": "TextBlock",
-                 "text": "⏳ Procesando... Los resultados llegarán en breve.",
+                 "text": "Procesando... Los resultados llegaran en breve.",
                  "isSubtle": True},
             ]}
 
@@ -255,10 +255,10 @@ def build_remediation_launch_card(target: str, job_id: int,
 def build_not_found_card(target: str) -> dict:
     return {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
             "version": "1.4", "body": [
-                {"type": "TextBlock", "text": "🔧 Remediador",
+                {"type": "TextBlock", "text": "Remediador",
                  "weight": "Bolder", "size": "Medium"},
                 {"type": "TextBlock",
-                 "text": f"❌ Host no encontrado: {target}",
+                 "text": f"Host no encontrado: {target}",
                  "color": _RED},
                 {"type": "TextBlock",
                  "text": f"'{target}' no existe en el inventario de AAP. Verifica el nombre.",
@@ -270,9 +270,9 @@ def build_error_card(target: str, job_id: int, msg: str) -> dict:
     return {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
             "version": "1.4", "body": [
                 {"type": "TextBlock",
-                 "text": f"🔧 Remediador — {target}  |  Job #{job_id}",
+                 "text": f"Remediador — {target}  |  Job #{job_id}",
                  "weight": "Bolder"},
-                {"type": "TextBlock", "text": f"❌ {msg}",
+                {"type": "TextBlock", "text": msg,
                  "color": _RED, "wrap": True},
             ]}
 
