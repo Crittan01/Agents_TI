@@ -1,0 +1,189 @@
+---
+# =============================================================================
+# STRESS TEST — Genera carga realista para certificar el remediador
+#
+# Variables:
+#   stress_type:     cpu | ram | disk | all  (default: all)
+#   stress_duration: segundos activos para CPU/RAM   (default: 180)
+#   stress_cpu_procs: numero de procesos CPU          (default: 4)
+#   stress_ram_mb:   MB a alocar en RAM por proceso   (default: 60)
+#   stress_ram_procs: numero de procesos RAM           (default: 3)
+#
+# Uso desde AWX:
+#   extra_vars:
+#     target: ol9server1
+#     stress_type: disk
+#
+# Que ejercita cada tipo:
+#   cpu  → N procesos sha256sum /dev/urandom (killable, no excluidos)
+#   ram  → N procesos perl con arrays en heap (killable, no excluidos)
+#   disk → archivos grandes /tmp  +  logs rotados /var/log
+#          +  archivos viejos backdateados  +  core dumps simulados
+#   all  → los tres anteriores simultaneamente
+# =============================================================================
+
+- name: "STRESS | Detectar hosts alcanzables"
+  hosts: "{{ target }}"
+  gather_facts: false
+  ignore_unreachable: true
+  tasks:
+    - name: "STRESS | Ping"
+      ansible.builtin.ping:
+      register: _ping
+      ignore_errors: true
+
+    - name: "STRESS | Marcar alcanzable"
+      ansible.builtin.group_by:
+        key: reachable_hosts
+      when: _ping is succeeded
+
+
+- name: "STRESS | Aplicar carga en hosts alcanzables"
+  hosts: reachable_hosts
+  gather_facts: false
+  become: true
+  vars:
+    _type:       "{{ stress_type      | default('all') }}"
+    _duration:   "{{ stress_duration  | default(180)  | int }}"
+    _cpu_procs:  "{{ stress_cpu_procs | default(4)    | int }}"
+    _ram_mb:     "{{ stress_ram_mb    | default(60)   | int }}"
+    _ram_procs:  "{{ stress_ram_procs | default(3)    | int }}"
+
+  tasks:
+
+    # ── CPU ────────────────────────────────────────────────────────────────────
+    - name: "STRESS | CPU — lanzar {{ _cpu_procs }} procesos sha256sum"
+      ansible.builtin.shell: |
+        for i in $(seq 1 {{ _cpu_procs }}); do
+          (dd if=/dev/urandom bs=64k 2>/dev/null | sha256sum > /dev/null) &
+          echo $!
+        done
+      async: "{{ _duration | int + 10 }}"
+      poll: 0
+      when: _type in ['cpu', 'all']
+
+    - name: "STRESS | CPU — esperar 3s y medir"
+      ansible.builtin.shell: |
+        sleep 3
+        read _ u1 n1 s1 i1 _ < <(grep '^cpu ' /proc/stat); sleep 1
+        read _ u2 n2 s2 i2 _ < <(grep '^cpu ' /proc/stat)
+        total=$(( (u2+n2+s2+i2) - (u1+n1+s1+i1) ))
+        idle=$(( i2 - i1 ))
+        echo "CPU: $(( (total - idle) * 100 / (total > 0 ? total : 1) ))%"
+        echo "Procesos sha256sum activos: $(pgrep -c sha256sum 2>/dev/null || echo 0)"
+      register: _cpu_check
+      changed_when: false
+      when: _type in ['cpu', 'all']
+
+    - name: "STRESS | CPU — estado"
+      ansible.builtin.debug:
+        msg: "{{ _cpu_check.stdout_lines }}"
+      when: _type in ['cpu', 'all']
+
+    # ── RAM ────────────────────────────────────────────────────────────────────
+    - name: "STRESS | RAM — lanzar {{ _ram_procs }} procesos perl ({{ _ram_mb }}MB c/u)"
+      ansible.builtin.shell: |
+        perl -e '
+          my @mem;
+          push @mem, "A" x (1024*1024) for 1..{{ _ram_mb }};
+          sleep {{ _duration }};
+        ' &
+        echo $!
+      loop: "{{ range(1, _ram_procs | int + 1) | list }}"
+      loop_control:
+        label: "proceso RAM {{ item }}"
+      async: "{{ _duration | int + 10 }}"
+      poll: 0
+      when: _type in ['ram', 'all']
+
+    - name: "STRESS | RAM — medir"
+      ansible.builtin.shell: |
+        sleep 2
+        free -m | awk '/^Mem:/{printf "RAM: %.1f%% (libre: %dMB / total: %dMB)\n", ($3/$2)*100, $4, $2}'
+        echo "Procesos perl activos: $(pgrep -c perl 2>/dev/null || echo 0)"
+      register: _ram_check
+      changed_when: false
+      when: _type in ['ram', 'all']
+
+    - name: "STRESS | RAM — estado"
+      ansible.builtin.debug:
+        msg: "{{ _ram_check.stdout_lines }}"
+      when: _type in ['ram', 'all']
+
+    # ── DISCO ──────────────────────────────────────────────────────────────────
+
+    # Path 1b: archivos grandes en /tmp (>500MB) → fix_disk paso 1b
+    - name: "STRESS | DISK — archivo grande en /tmp (1500MB)"
+      ansible.builtin.shell: |
+        dd if=/dev/zero of=/tmp/stress_large.bin bs=1M count=1500 2>/dev/null
+        echo "Creado: $(du -sh /tmp/stress_large.bin | cut -f1)"
+      when: _type in ['disk', 'all']
+
+    # Path 1: archivos viejos en disk_clean_path (backdateados 30 dias) → fix_disk paso 1
+    - name: "STRESS | DISK — archivos viejos backdateados en /tmp (300MB)"
+      ansible.builtin.shell: |
+        dd if=/dev/zero of=/tmp/stress_old_a.tmp bs=1M count=150 2>/dev/null
+        dd if=/dev/zero of=/tmp/stress_old_b.tmp bs=1M count=150 2>/dev/null
+        touch -d "30 days ago" /tmp/stress_old_a.tmp /tmp/stress_old_b.tmp
+        echo "Creados: $(du -sh /tmp/stress_old_*.tmp | awk '{sum+=$1} END{print sum}')MB backdateados"
+      when: _type in ['disk', 'all']
+
+    # Path 2: logs rotados en /var/log → fix_disk paso 2
+    - name: "STRESS | DISK — logs rotados en /var/log (*.1, *.2, *.gz)"
+      ansible.builtin.shell: |
+        TOTAL=0
+        for i in 1 2 3 4; do
+          dd if=/dev/zero of=/var/log/stress_app.log.$i bs=1M count=80 2>/dev/null
+          TOTAL=$(( TOTAL + 80 ))
+        done
+        # Comprimir algunos para simular .gz
+        gzip -f /var/log/stress_app.log.3 2>/dev/null || true
+        gzip -f /var/log/stress_app.log.4 2>/dev/null || true
+        # Crear uno con nombre tipo rotacion por fecha
+        dd if=/dev/zero of=/var/log/stress_app.log-$(date +%Y%m%d) bs=1M count=50 2>/dev/null
+        echo "Logs rotados creados: ~$(( TOTAL + 50 ))MB en /var/log"
+      when: _type in ['disk', 'all']
+
+    # Path 5: core dumps → fix_disk paso 5
+    - name: "STRESS | DISK — core dumps simulados (100MB)"
+      ansible.builtin.shell: |
+        dd if=/dev/zero of=/tmp/core.stress_app bs=1M count=60 2>/dev/null
+        dd if=/dev/zero of=/var/crash/core.stress_svc bs=1M count=40 2>/dev/null
+        echo "Core dumps: $(du -sh /tmp/core.stress_app /var/crash/core.stress_svc 2>/dev/null)"
+      failed_when: false
+      when: _type in ['disk', 'all']
+
+    - name: "STRESS | DISK — estado final"
+      ansible.builtin.shell: |
+        echo "=== /tmp ==="
+        df -h /tmp | awk 'NR==2{print $5" usado ("$3" de "$2")"}'
+        ls -lah /tmp/stress_* /tmp/core.* 2>/dev/null | awk '{print $5, $9}'
+        echo "=== /var/log (stress) ==="
+        ls -lah /var/log/stress_* 2>/dev/null | awk '{print $5, $9}' | head -10
+      register: _disk_check
+      changed_when: false
+      when: _type in ['disk', 'all']
+
+    - name: "STRESS | DISK — resumen"
+      ansible.builtin.debug:
+        msg: "{{ _disk_check.stdout_lines }}"
+      when: _type in ['disk', 'all']
+
+    # ── Resumen general ────────────────────────────────────────────────────────
+    - name: "STRESS | Resumen final del host"
+      ansible.builtin.shell: |
+        echo "Host: {{ inventory_hostname }}"
+        echo "Tipo de stress: {{ _type }}"
+        read _ u1 n1 s1 i1 _ < <(grep '^cpu ' /proc/stat); sleep 1
+        read _ u2 n2 s2 i2 _ < <(grep '^cpu ' /proc/stat)
+        total=$(( (u2+n2+s2+i2) - (u1+n1+s1+i1) ))
+        idle=$(( i2 - i1 ))
+        echo "CPU:   $(( (total - idle) * 100 / (total > 0 ? total : 1) ))%"
+        free -m | awk '/^Mem:/{printf "RAM:   %.1f%%\n", ($3/$2)*100}'
+        df -h /tmp | awk 'NR==2{print "Disco /tmp: "$5}'
+      register: _summary
+      changed_when: false
+
+    - name: "STRESS | RESUMEN"
+      ansible.builtin.debug:
+        msg: "{{ _summary.stdout_lines }}"
