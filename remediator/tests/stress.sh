@@ -80,8 +80,7 @@ do_ram() {
     chmod +x $script
     setsid bash $script </dev/null >/dev/null 2>&1 &
     disown $!
-    sleep 3
-    sleep 3
+    sleep 4
     echo "[RAM] Activos: $(pgrep -c perl 2>/dev/null) procesos — RAM: $(ram_pct)%"
 }
 

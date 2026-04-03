@@ -19,7 +19,8 @@ Adaptive Card con el resultado.
 5. [NLU — Intents y ejemplos](#nlu)
 6. [Recursos AWX](#recursos-awx)
 7. [Stack tecnológico](#stack)
-8. [Cómo agregar un nuevo caso de uso](#nuevo-caso)
+8. [Pruebas de stress](#stress)
+9. [Cómo agregar un nuevo caso de uso](#nuevo-caso)
 
 ---
 
@@ -37,7 +38,7 @@ Operador (Teams — lenguaje natural)
                           NLU (Claude Haiku)  ──►  intent + target + params
                                     │
                                     ▼
-                          AAP REST API  ──►  lanza Job Template con extra_vars
+                          AAP REST API  ──►  Job Template con extra_vars
                                     │
                                     ▼
                     Rol Ansible ejecuta en servidor(es) Linux
@@ -54,7 +55,7 @@ Operador (Teams — lenguaje natural)
   lo que llegó.
 - Los errores en servidores individuales no detienen la ejecución global.
 - Hosts no alcanzables siempre aparecen en el resultado, marcados como `unreachable`.
-- Todo configurable vía `.env` — sin credenciales hardcodeadas en código.
+- Todo configurable vía `.env` — sin credenciales hardcodeadas.
 
 ---
 
@@ -108,12 +109,14 @@ agents/
     │   └── roles/remediator/
     │       └── tasks/
     │           ├── main.yml         ← orquestación + block/rescue/always
-    │           ├── diagnose.yml     ← métricas CPU/RAM/Disco + top procesos (fase pre y post)
+    │           ├── diagnose.yml     ← métricas CPU/RAM/Disco + top procesos (pre y post)
     │           ├── fix_cpu.yml      ← mata procesos con CPU > umbral
     │           ├── fix_ram.yml      ← drop_caches + journal + kill selectivo
-    │           └── fix_disk.yml     ← /tmp grandes + logs rotados + journal + DNF + cores
-    └── bridge/
-        └── remediator_cards.py
+    │           └── fix_disk.yml     ← 5 estrategias de limpieza de disco
+    ├── bridge/
+    │   └── remediator_cards.py
+    └── tests/
+        └── stress.sh                ← genera carga realista para certificar el remediador
 ```
 
 ---
@@ -167,6 +170,7 @@ NAMING_CONVENTION_PATH=../docs/naming_convention.md
 **Terminal 1 — API:**
 ```bash
 cd /Ansible/agents
+source .venv/bin/activate
 uvicorn shared.bridge.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -175,7 +179,8 @@ uvicorn shared.bridge.main:app --host 0.0.0.0 --port 8000 --reload
 cloudflared tunnel --url http://localhost:8000 --protocol http2
 ```
 
-> `--protocol http2` es obligatorio si QUIC está bloqueado por el firewall (error `failed to dial`).
+> `--protocol http2` es obligatorio si QUIC está bloqueado por el firewall
+> (síntoma: `failed to dial` / `context deadline exceeded`).
 
 ---
 
@@ -198,26 +203,30 @@ AnsibleBot criticos en laboratorio
 
 | Solicitud | `resources` | Playbook ejecuta | Artifact contiene | Card muestra |
 |-----------|------------|-----------------|-------------------|--------------|
-| "como esta ol9server1" | `["all"]` | cpu + ram + disk | cpu, ram, disks | CPU · RAM · Disco |
-| "dame la RAM" | `["ram"]` | solo memory.yml | ram | solo RAM |
-| "CPU y disco" | `["cpu","disk"]` | cpu + disk | cpu, disks | CPU · Disco |
+| `como esta ol9server1` | `["all"]` | cpu + ram + disk | cpu, ram, disks | CPU · RAM · Disco |
+| `dame la RAM` | `["ram"]` | solo memory.yml | ram | solo RAM |
+| `dame el disco` | `["disk"]` | solo disk.yml | disks | solo Disco |
+| `CPU y disco` | `["cpu","disk"]` | cpu + disk | cpu, disks | CPU · Disco |
 
-**Umbrales:** Verde < 70% · Amarillo 70–84% · Rojo >= 85%
+**Umbrales de color:** Verde < 70% · Amarillo 70–84% · Rojo >= 85%
 
 **Artifact publicado:**
 ```json
 {
   "ol9server1": {
+    "generated_at": "2026-04-02T14:00:00Z",
+    "status": "ok",
     "cpu": 4.4,
-    "ram": {"used_percent": 77.0, "free_mb": 1200, "total_mb": 8192},
-    "disks": [{"mount": "/", "usage_pct": 42.0, "used_gb": 12.1, "total_gb": 28.7}],
-    "generated_at": "2026-04-02T14:00:00",
-    "status": "ok"
+    "ram": {"used_percent": "77.0", "free_mb": "79", "total_mb": "335"},
+    "disks": [
+      {"mount": "/",    "fstype": "xfs", "usage_pct": 36.9, "used_gb": 2.56, "total_gb": 6.94},
+      {"mount": "/tmp", "fstype": "xfs", "usage_pct": 85.8, "used_gb": 3.38, "total_gb": 3.94}
+    ]
   }
 }
 ```
 
-> Las claves `cpu`, `ram`, `disks` solo aparecen si fueron solicitadas.
+> Las claves `cpu`, `ram`, `disks` solo aparecen en el artifact si fueron solicitadas.
 
 ---
 
@@ -235,7 +244,7 @@ AnsibleBot busca OutOfMemory en WEBLOGIC_PDN
 
 **Parámetros:** `time_window_hours` (default 2h) · `severity` (ERROR/WARN/ALL) · `keyword`
 
-**Rutas base** (siempre escaneadas, `group_vars/all.yml`):
+**Rutas base** (siempre escaneadas — `group_vars/all.yml`):
 ```yaml
 base_log_paths:
   - paths: [/var/log]
@@ -244,8 +253,8 @@ base_log_paths:
     patterns: ["secure*", "audit*"]
 ```
 
-Rutas adicionales por host en `host_vars/{HOSTNAME}.yml` (desde `Rutas_de_logs.xlsx`).
-Si una ruta no existe en el servidor, se omite silenciosamente y se reporta en `paths_skipped`.
+Rutas adicionales por host en `host_vars/{HOSTNAME}.yml` (pobladas desde `Rutas_de_logs.xlsx`).
+Si una ruta no existe en el servidor se omite silenciosamente y se reporta en `paths_skipped`.
 
 **Artifact publicado:**
 ```json
@@ -278,7 +287,7 @@ Diagnostica y/o corrige problemas de CPU, RAM y Disco en servidores Linux.
 | `remediate` | `remediate` | Ejecuta correcciones + captura antes/después |
 | `full` | `full_remediate` | Diagnostica → corrige → métricas post |
 
-> `remediate` y `full` siempre muestran `pre_metrics` (antes) y `post_metrics` (después).
+> `remediate` y `full` siempre producen `pre_metrics` (antes) y `post_metrics` (después).
 
 **Ejemplos en Teams:**
 ```
@@ -286,26 +295,28 @@ AnsibleBot diagnostica ol9server1
 AnsibleBot arregla la CPU de ol9server1
 AnsibleBot limpia el disco de ol9server1
 AnsibleBot libera RAM de ol9server1
-AnsibleBot arregla ol9server1              ← issue_type=auto (detecta qué hay alto)
+AnsibleBot arregla ol9server1              ← issue_type=auto
 AnsibleBot revisa y arregla ol9server1     ← full + auto
 ```
 
-**Parámetro `issue_type`:** `cpu` · `ram` · `disk` · `auto`
+**`issue_type`:** `cpu` · `ram` · `disk` · `auto`
 
 Con `auto`, el playbook detecta qué recursos superan el 85% y actúa solo sobre ellos.
-La card resultante también filtra y muestra únicamente las métricas relevantes al issue resuelto.
+La card resultante también filtra y muestra únicamente las métricas del issue resuelto.
 
-**Qué hace cada fixer:**
+**Acciones por fixer:**
 
-| Fixer | Acciones |
-|-------|---------|
-| `fix_cpu.yml` | Identifica procesos con CPU > umbral (default 80%), excluye servicios críticos, mata candidatos con SIGTERM |
-| `fix_ram.yml` | `drop_caches` (siempre seguro) + `journalctl --vacuum-size=100M` + kill de procesos con alto %MEM si RAM >= 80% post-drop |
-| `fix_disk.yml` | Archivos >500MB en /tmp + archivos viejos en `disk_clean_path` + logs rotados en /var/log + `journalctl --vacuum-time=7d` + `dnf clean all` + core dumps |
+| Fixer | Estrategias |
+|-------|------------|
+| `fix_cpu.yml` | Detecta procesos con CPU > umbral (default 80%), excluye servicios críticos, mata candidatos con SIGTERM |
+| `fix_ram.yml` | `sync && drop_caches` (siempre seguro) → `journalctl --vacuum-size=100M` → kill de procesos con alto %MEM si RAM ≥ 80% post-drop |
+| `fix_disk.yml` | 1) Archivos >500MB en `/tmp` · 2) Archivos viejos >7d en `disk_clean_path` · 3) Logs rotados `*.gz *.1 *.2 *-YYYYMMDD` · 4) `journalctl --vacuum-time=7d` · 5) `dnf clean all` · 6) Core dumps en `/var/crash` y `core.*` |
 
 **Servicios excluidos del kill (CPU y RAM):**
-`sshd, systemd, auditd, crond, rsyslogd, tuned, polkitd, dbus-daemon, NetworkManager,`
-`firewalld, chronyd, uwsgi, uvicorn, cloudflared, python3, ansible`
+```
+sshd  systemd  auditd  crond  rsyslogd  tuned  polkitd  dbus-daemon
+NetworkManager  firewalld  chronyd  uwsgi  uvicorn  cloudflared  python3  ansible
+```
 
 **Artifact publicado:**
 ```json
@@ -313,11 +324,16 @@ La card resultante también filtra y muestra únicamente las métricas relevante
   "ol9server1": {
     "hostname": "ol9server1",
     "mode": "remediate",
-    "issue_type": "disk",
-    "actions_taken": ["DISK: eliminados 1 archivo(s) grande(s) en /tmp (3400 MB)"],
+    "issue_type": "cpu,disk",
+    "diagnosis": {"cpu_pct": "100", "ram_pct": "82.1", "disk_pct": "86"},
+    "pre_metrics":  {"cpu_pct": "100", "ram_pct": "82.1", "disk_pct": "86"},
+    "post_metrics": {"cpu_pct": "0",   "ram_pct": "84.8", "disk_pct": "2"},
+    "actions_taken": [
+      "CPU: eliminado PID 47368 (ansible 98.7% bash)",
+      "DISK: eliminados 2 archivo(s) grande(s) en /tmp (3400 MB)"
+    ],
     "disk_freed_mb": 3400,
-    "pre_metrics":  {"cpu_pct": "0", "ram_pct": "82.1", "disk_pct": "86"},
-    "post_metrics": {"cpu_pct": "1", "ram_pct": "85.1", "disk_pct": "2"},
+    "block_error": false,
     "status": "remediated"
   }
 }
@@ -329,7 +345,7 @@ La card resultante también filtra y muestra únicamente las métricas relevante
 
 ## NLU — Intents y ejemplos <a name="nlu"></a>
 
-El NLU usa Claude Haiku como modelo principal y un parser de palabras clave como fallback.
+El NLU usa **Claude Haiku** como modelo principal y un parser de palabras clave como fallback.
 Carga el inventario y la convención de nombres en el system prompt para resolver hosts.
 
 ### Intents disponibles
@@ -337,6 +353,7 @@ Carga el inventario y la convención de nombres en el system prompt para resolve
 ```json
 // Salud individual / grupo
 {"intent":"health_check","target":"ol9server1","type":"host","resources":["ram"]}
+{"intent":"health_check","target":"ol9server1","type":"host","resources":["cpu","disk"]}
 {"intent":"health_check","target":"WEBLOGIC_PDN","type":"group","resources":["all"]}
 
 // Salud de ambiente completo
@@ -348,9 +365,9 @@ Carga el inventario y la convención de nombres en el system prompt para resolve
 {"intent":"log_fleet","targets":["WEBLOGIC_PDN"],"environment":"produccion","time_window_hours":2,"severity":"ERROR"}
 
 // Remediacion
-{"intent":"diagnose","target":"ol9server1","type":"host","issue_type":"auto"}
-{"intent":"remediate","target":"ol9server1","type":"host","issue_type":"disk"}
-{"intent":"full_remediate","target":"ol9server1","type":"host","issue_type":"auto"}
+{"intent":"diagnose",        "target":"ol9server1","type":"host","issue_type":"auto"}
+{"intent":"remediate",       "target":"ol9server1","type":"host","issue_type":"disk"}
+{"intent":"full_remediate",  "target":"ol9server1","type":"host","issue_type":"auto"}
 
 // Otros
 {"intent":"clarify","question":"Te refieres a produccion o laboratorio?"}
@@ -359,9 +376,9 @@ Carga el inventario y la convención de nombres en el system prompt para resolve
 
 ### Reglas de clasificación (orden estricto)
 
-1. **Remediación** — palabras: `limpia, libera, arregla, remedia, corrige, fix, clean`
+1. **Remediación** — palabras: `limpia, libera, arregla, remedia, corrige, fix, clean, depura, soluciona`
 2. **Log** — palabras: `errores, logs, busca, ORA-, Exception, OutOfMemory, WARN`
-3. **Salud** — palabras: `CPU, RAM, disco, memoria, salud, como esta, valida, revisar`
+3. **Salud** — palabras: `CPU, RAM, disco, memoria, salud, como esta, valida, estado, recursos`
 4. Ambigüedad → **Log** (nunca `clarify`, salvo colisión de nombres de host)
 
 ---
@@ -375,9 +392,9 @@ Carga el inventario y la convención de nombres en el system prompt para resolve
 | Credencial SSH | 3 | — |
 | Inventario | 2 | — |
 | Proyecto | 8 | Agents_TI (rama: `develop`) |
-| Job Template Health Check | 9 | Agent - Health Check |
-| Job Template Log Monitor | 10 | Agent - Log Monitor |
-| Job Template Remediador | 13 | Agent - Remediator |
+| Job Template — Health Check | 9 | Agent - Health Check |
+| Job Template — Log Monitor | 10 | Agent - Log Monitor |
+| Job Template — Remediador | 13 | Agent - Remediator |
 | AWX URL | — | `https://ol9-awx.lab.com/` |
 | Repositorio | — | `https://github.com/Crittan01/Agents_TI.git` |
 
@@ -385,18 +402,77 @@ Carga el inventario y la convención de nombres en el system prompt para resolve
 
 ## Stack tecnológico <a name="stack"></a>
 
-| Componente | Versión | Uso |
-|---|---|---|
-| Python | 3.9 | Bridge y módulos Ansible |
-| FastAPI | 0.128+ | Endpoint /teams/webhook |
-| uvicorn | 0.39+ | Servidor ASGI |
-| anthropic SDK | 0.40+ | NLU con Claude Haiku |
-| requests | 2.32+ | Cliente HTTP AWX y Teams |
-| python-dotenv | 1.2+ | Variables de entorno |
-| Ansible | — | Playbooks en AWX |
-| AWX | — | Plataforma de automatización |
-| Claude Haiku | claude-haiku-4-5-20251001 | Modelo NLU |
-| Cloudflare Tunnel | — | Exposición del webhook a Teams |
+| Componente | Uso |
+|---|---|
+| Python 3.9 | Bridge y módulos Ansible custom |
+| FastAPI + uvicorn | Endpoint `/teams/webhook` (ASGI, `--reload` en dev) |
+| anthropic SDK | NLU con Claude Haiku (`claude-haiku-4-5-20251001`) |
+| requests | Cliente HTTP para AWX REST API y Teams webhook |
+| python-dotenv | Variables de entorno desde `.env` |
+| Ansible / AWX | Ejecución de playbooks en servidores Linux |
+| Cloudflare Tunnel | Exposición del webhook a Microsoft Teams |
+| Microsoft Teams | Incoming Webhook + Adaptive Cards v1.4 |
+
+---
+
+## Pruebas de stress <a name="stress"></a>
+
+El script `remediator/tests/stress.sh` genera carga realista para certificar el remediador.
+Se corre directamente vía SSH, sin necesidad de Job Template.
+
+### Uso
+
+```bash
+# Stress de un recurso específico
+ssh ansible@ol9server1 'bash -s' < remediator/tests/stress.sh cpu  180
+ssh ansible@ol9server1 'bash -s' < remediator/tests/stress.sh ram  180
+ssh ansible@ol9server1 'bash -s' < remediator/tests/stress.sh disk
+
+# Todo a la vez — ideal para probar auto-detect
+ssh ansible@ol9server1 'bash -s' < remediator/tests/stress.sh all  180
+
+# Limpiar cuando termines
+ssh ansible@ol9server1 'bash -s' < remediator/tests/stress.sh clean
+```
+
+### Qué genera cada tipo
+
+| Tipo | Resultado esperado | Killable por fixer |
+|------|-------------------|--------------------|
+| `cpu` | 4 × `sha256sum /dev/urandom` → CPU ~100% | Sí — `sha256sum` no está excluido |
+| `ram` | Perl adaptativo: calcula MB necesarios para llegar a 87% · `setsid` para sobrevivir al SSH | Sí — `perl` no está excluido |
+| `disk` | `/tmp/stress_large.bin` 3.2GB + archivos viejos backdateados 30d + logs rotados `*.1/*.gz/*-YYYYMMDD` + core dumps → /tmp ~88% | Sí — ejercita los 5 paths de `fix_disk.yml` |
+| `all` | CPU 100% · RAM ~87% · Disco /tmp ~88% | Los tres recursos remediables |
+
+### Paths de fix_disk.yml cubiertos
+
+| Path | Archivo de stress creado |
+|------|--------------------------|
+| Archivos >500MB en `/tmp` | `/tmp/stress_large.bin` (3.2 GB) |
+| Archivos viejos >7d | `/tmp/stress_old_a.tmp`, `/tmp/stress_old_b.tmp` (backdateados 30 días) |
+| Logs rotados `*.1 *.2 *.gz *-YYYYMMDD` | `/var/log/stress_app.log.1-4`, `.log.3.gz`, `.log.4.gz`, `.log-YYYYMMDD` |
+| `journalctl --vacuum` | No requiere stress — el journal siempre tiene datos |
+| Core dumps | `/tmp/core.stress_app`, `/var/crash/core.stress_svc` |
+
+### Secuencia de certificación completa
+
+```bash
+# 1. Levantar entorno
+uvicorn shared.bridge.main:app --host 0.0.0.0 --port 8000 --reload &
+cloudflared tunnel --url http://localhost:8000 --protocol http2 &
+
+# 2. Generar carga
+ssh ansible@ol9server1 'bash -s' < remediator/tests/stress.sh all 180
+
+# 3. Enviar comandos desde Teams (dentro de los 180s de duracion)
+#    AnsibleBot arregla ol9server1        ← auto detecta CPU + disco
+#    AnsibleBot arregla la CPU de ol9server1
+#    AnsibleBot limpia el disco de ol9server1
+#    AnsibleBot libera RAM de ol9server1
+
+# 4. Limpiar si quedó algo
+ssh ansible@ol9server1 'bash -s' < remediator/tests/stress.sh clean
+```
 
 ---
 
@@ -409,12 +485,18 @@ mkdir -p agents/nuevo-caso/playbooks/roles/nuevo_rol/tasks
 mkdir -p agents/nuevo-caso/bridge
 ```
 
-### 2. Playbook — estructura de 3 plays (patrón del proyecto)
+### 2. Playbook — patrón de 3 plays del proyecto
 
 ```
-Play 1: Detectar hosts alcanzables (ignore_unreachable + group_by: reachable_hosts)
-Play 2: Ejecutar rol (solo reachable_hosts) — block/rescue/always — set_stats al final
-Play 3: Consolidar en localhost (incluye unreachable en artifact)
+Play 1: Detectar hosts alcanzables
+        (ignore_unreachable + group_by: reachable_hosts)
+
+Play 2: Ejecutar rol (solo reachable_hosts)
+        block / rescue / always
+        set_stats al final con el artifact del host
+
+Play 3: Consolidar en localhost
+        (incluye unreachable en artifact, lanza set_stats global)
 ```
 
 ### 3. Bridge Python
@@ -426,7 +508,7 @@ nuevo-caso/bridge/nuevo_cards.py   ← constructores de Adaptive Cards
 En `shared/bridge/`:
 - `nlu.py` — agregar nuevos intents al system prompt y al fallback parser
 - `aap.py` — agregar `launch_nuevo_job()` y `extract_nuevo_data()`
-- `main.py` — agregar handler para el nuevo intent
+- `main.py` — agregar handler para el nuevo intent en el router
 
 ### 4. AWX
 
@@ -437,4 +519,4 @@ En `shared/bridge/`:
 ### 5. Actualizar este README
 
 Agregar sección en [Casos de uso](#casos) con:
-descripción · ejemplos de frases · formato del artifact · estados posibles.
+descripción · frases de ejemplo · formato del artifact · estados posibles.
