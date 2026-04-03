@@ -49,7 +49,9 @@ status() {
 do_cpu() {
     echo "[CPU] Lanzando $CPU_PROCS procesos sha256sum por ${DURATION}s..."
     for i in $(seq 1 $CPU_PROCS); do
-        timeout $DURATION bash -c 'dd if=/dev/urandom bs=64k 2>/dev/null | sha256sum > /dev/null' &
+        nohup bash -c "timeout $DURATION bash -c 'dd if=/dev/urandom bs=64k 2>/dev/null | sha256sum > /dev/null'" \
+            </dev/null >/dev/null 2>&1 &
+        disown $!
     done
     sleep 2
     echo "[CPU] Activos: $(pgrep -c sha256sum 2>/dev/null) procesos — CPU: $(cpu_pct)%"
@@ -57,11 +59,29 @@ do_cpu() {
 
 # ── RAM ───────────────────────────────────────────────────────────────────────
 do_ram() {
-    echo "[RAM] Lanzando $RAM_PROCS procesos perl (${RAM_MB}MB c/u = $(( RAM_PROCS * RAM_MB ))MB total)..."
-    for i in $(seq 1 $RAM_PROCS); do
-        perl -e "my \@m; push \@m, 'A' x (1024*1024) for 1..$RAM_MB; sleep $DURATION;" &
+    # Calcular cuantos MB faltan para llegar al 87% de RAM
+    local total_mb=$(free -m | awk '/^Mem:/{print $2}')
+    local used_mb=$(free -m  | awk '/^Mem:/{print $3}')
+    local target_mb=$(( total_mb * 87 / 100 ))
+    local needed_mb=$(( target_mb - used_mb ))
+    [ $needed_mb -le 10 ] && { echo "[RAM] Ya esta en $(ram_pct)% — sin stress necesario"; return; }
+    # Dividir en procesos de maximo 80MB para no provocar OOM de golpe
+    local proc_mb=$(( needed_mb < 80 ? needed_mb : 80 ))
+    local procs=$(( (needed_mb + proc_mb - 1) / proc_mb ))
+    echo "[RAM] Necesito ${needed_mb}MB mas para llegar a 87% — lanzando $procs x ${proc_mb}MB (total: ${needed_mb}MB)"
+    # Escribe un script temporal y lo lanza con setsid (nueva sesion, sobrevive al SSH)
+    local script=/tmp/stress_ram_run.sh
+    printf '#!/bin/bash\n' > $script
+    for i in $(seq 1 $procs); do
+        printf 'perl -e "my @m; push @m, q(A) x (1024*1024) for 1..%d; sleep %d;" &\n' \
+            "$proc_mb" "$DURATION" >> $script
     done
-    sleep 2
+    printf 'wait\n' >> $script
+    chmod +x $script
+    setsid bash $script </dev/null >/dev/null 2>&1 &
+    disown $!
+    sleep 3
+    sleep 3
     echo "[RAM] Activos: $(pgrep -c perl 2>/dev/null) procesos — RAM: $(ram_pct)%"
 }
 
@@ -69,9 +89,9 @@ do_ram() {
 do_disk() {
     echo "[DISK] Creando archivos de stress..."
 
-    # Path 1b — archivo grande en /tmp (>500MB)
-    echo "  > /tmp/stress_large.bin  (1500MB)"
-    dd if=/dev/zero of=/tmp/stress_large.bin bs=1M count=1500 2>/dev/null
+    # Path 1b — archivo grande en /tmp (>500MB) — dimensionado para llevar /tmp a ~85%
+    echo "  > /tmp/stress_large.bin  (3200MB)"
+    dd if=/dev/zero of=/tmp/stress_large.bin bs=1M count=3200 2>/dev/null
 
     # Path 1 — archivos viejos backdateados (>7 dias)
     echo "  > /tmp/stress_old_*.tmp  (200MB, backdateados 30 dias)"
