@@ -63,6 +63,14 @@ CASOS = [
     ("hay errores o warnings en Laboratorio las ultimas 24 horas", "log_fleet", "24h + WARN"),
     ("errores en produccion las ultimas 12 horas",                 "log_fleet", "12h + ERROR"),
 
+    # ── INVENTARIO (nuevo modulo) ─────────────────────────────────────────────
+    ("cuantas maquinas tiene produccion",           "inventory_query", "conteo por ambiente"),
+    ("dame la lista de servidores de desarrollo",   "inventory_query", "listado de ambiente"),
+    ("cuantos hosts hay en total",                  "inventory_query", "conteo total"),
+    ("listado de servidores Weblogic",              "inventory_query", "listado por app"),
+    ("en que grupo esta SGWLSAPPP01",               "inventory_query", "busqueda de host"),
+    ("cuantos servidores tiene laboratorio Joomla", "inventory_query", "conteo filtrado"),
+
     # ── Unknown ──────────────────────────────────────────────────────────────
     ("reinicia el servidor SGWLSAPPP01",            "unknown",     "accion no soportada"),
     ("hola como estas",                             "unknown",     "saludo"),
@@ -88,10 +96,11 @@ print(f"{'─'*80}{RESET}\n")
 # health_check(group) y fleet_check([grupo]) producen el mismo resultado en main.py
 # log_check(group)    y log_fleet([grupo])   producen el mismo resultado en main.py
 _EQUIVALENTES = {
-    "health_check": {"health_check", "fleet_check"},
-    "fleet_check":  {"fleet_check",  "health_check"},
-    "log_check":    {"log_check",    "log_fleet"},
-    "log_fleet":    {"log_fleet",    "log_check"},
+    "health_check":    {"health_check", "fleet_check"},
+    "fleet_check":     {"fleet_check",  "health_check"},
+    "log_check":       {"log_check",    "log_fleet"},
+    "log_fleet":       {"log_fleet",    "log_check"},
+    "inventory_query": {"inventory_query"},
 }
 
 for frase, esperado, descripcion in CASOS:
