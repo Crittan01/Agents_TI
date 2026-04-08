@@ -405,7 +405,7 @@ def wait_and_report_remediation(job_id: int, target: str,
     post_to_teams(rc.build_error_card(target, job_id, "Timeout: el job superó 5 minutos."))
 
 
-# ─── Inventory query (sincrono, sin AWX) ─────────────────────────────────────
+# ─── Inventory query (background, sin AWX) ───────────────────────────────────
 
 _INV_SYSTEM = (
     "Eres VOLT, asistente de infraestructura."
@@ -417,6 +417,12 @@ _INV_SYSTEM = (
     "Si la pregunta no tiene respuesta en el inventario, di exactamente: "
     "No encontré esa información en el inventario."
 )
+
+def _run_inventory_query(pregunta: str) -> None:
+    """Background task: llama answer_inventory_query y postea la card al canal."""
+    card = answer_inventory_query(pregunta)
+    post_to_teams(card)
+
 
 def answer_inventory_query(pregunta: str) -> dict:
     """
@@ -607,8 +613,8 @@ async def teams_webhook(request: Request, background_tasks: BackgroundTasks):
     if intent == "inventory_query":
         query = parsed.get("query", clean)
         logger.info("INV query: %r", query[:120])
-        card = answer_inventory_query(query)
-        return ic._card_response(card)
+        background_tasks.add_task(_run_inventory_query, query)
+        return {"type": "message", "text": "Consultando inventario..."}
 
     # ── Unknown ───────────────────────────────────────────────────────────────
     logger.info("ROUTER intent desconocido para: %r", clean[:80])
