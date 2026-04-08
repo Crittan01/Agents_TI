@@ -1,5 +1,5 @@
 """
-Router unificado AnsibleBot.
+Router unificado VOLT.
 Un solo webhook de Teams despacha a health-check o log-monitor
 segun el intent resuelto por el NLU compartido.
 """
@@ -60,7 +60,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(os.path.join(_HERE, "ansiblebot.log"), encoding="utf-8"),
+        logging.FileHandler(os.path.join(_HERE, "volt.log"), encoding="utf-8"),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -408,7 +408,7 @@ def wait_and_report_remediation(job_id: int, target: str,
 # ─── Inventory query (sincrono, sin AWX) ─────────────────────────────────────
 
 _INV_SYSTEM = (
-    "Eres AnsibleBot, asistente de infraestructura. "
+    "Eres VOLT, asistente de infraestructura."
     "Responde preguntas sobre el inventario de servidores usando los datos provistos. "
     "Sé conciso y preciso. Usa el español. "
     "Si la respuesta es una lista de hosts, empiézala con el prefijo LIST: "
@@ -616,14 +616,14 @@ async def teams_webhook(request: Request, background_tasks: BackgroundTasks):
         "type": "message",
         "text": (
             "Comando no reconocido. Ejemplos validos:\n"
-            "- @AnsibleBot valida SGWLSAPPP01\n"
-            "- @AnsibleBot salud de produccion\n"
-            "- @AnsibleBot logs de WEBLOGIC_PDN\n"
-            "- @AnsibleBot errores en laboratorio ultima hora\n"
-            "- @AnsibleBot limpia el disco de ol9server1\n"
-            "- @AnsibleBot libera RAM en ol9server1\n"
-            "- @AnsibleBot diagnostica ol9server1\n"
-            "- @AnsibleBot cuantas maquinas tiene produccion\n"
-            "- @AnsibleBot dame la lista de servidores Weblogic"
+            "- @VOLT valida SGWLSAPPP01\n"
+            "- @VOLT salud de produccion\n"
+            "- @VOLT logs de WEBLOGIC_PDN\n"
+            "- @VOLT errores en laboratorio ultima hora\n"
+            "- @VOLT limpia el disco de ol9server1\n"
+            "- @VOLT libera RAM en ol9server1\n"
+            "- @VOLT diagnostica ol9server1\n"
+            "- @VOLT cuantas maquinas tiene produccion\n"
+            "- @VOLT dame la lista de servidores Weblogic"
         ),
     }

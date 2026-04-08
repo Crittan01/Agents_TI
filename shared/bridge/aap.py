@@ -1,5 +1,5 @@
 """
-AAP client unificado para el router AnsibleBot.
+AAP client unificado para el router VOLT.
 Maneja tres job templates: health-check (HEALTH_JOB_TEMPLATE_ID)
                            log-monitor  (LOG_JOB_TEMPLATE_ID)
                            remediator   (REMEDIATION_JOB_TEMPLATE_ID)

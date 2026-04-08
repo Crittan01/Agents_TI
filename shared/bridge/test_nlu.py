@@ -1,5 +1,5 @@
 """
-Script de prueba para el NLU de AnsibleBot.
+Script de prueba para el NLU de VOLT.
 Ejecutar desde shared/bridge/:
     python3 test_nlu.py
 """
@@ -81,7 +81,7 @@ ok = 0
 fail = 0
 
 print(f"\n{NEGRITA}{'─'*80}")
-print(f"  AnsibleBot NLU — Test Suite ({len(CASOS)} casos)")
+print(f"  VOLT NLU — Test Suite ({len(CASOS)} casos)")
 print(f"{'─'*80}{RESET}\n")
 
 # Grupos de intents equivalentes funcionalmente (el modelo puede elegir cualquiera)

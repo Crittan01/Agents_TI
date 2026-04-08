@@ -55,7 +55,7 @@ _ENV_GROUPS = {
 }
 
 _SYSTEM_PROMPT = (
-    "Eres AnsibleBot, asistente de operaciones de infraestructura Linux para Sura / NTT Data.\n"
+    "Eres VOLT, asistente de operaciones de infraestructura Linux para Sura / NTT Data.\n"
     "Puedes ejecutar TRES tipos de acciones: verificar SALUD del sistema (CPU/RAM/disco), "
     "consultar LOGS de aplicacion (errores, warnings, excepciones), "
     "o REMEDIAR problemas (liberar RAM, limpiar disco, matar procesos de CPU).\n\n"

@@ -52,7 +52,7 @@ def wait_for_job(job_id: int, placeholder) -> bool:
 # ─── Layout ──────────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="AnsibleBot — Log Monitor",
+    page_title="VOLT — Log Monitor",
     page_icon="📋",
     layout="wide",
 )
