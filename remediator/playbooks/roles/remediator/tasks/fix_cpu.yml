@@ -9,10 +9,22 @@
 #   4. Registrar cada proceso eliminado
 # =============================================================================
 
-- name: "FIX_CPU | Obtener PIDs con CPU > {{ _cpu_thresh }}%"
+- name: "FIX_CPU | Obtener PIDs con CPU > umbral efectivo"
   ansible.builtin.shell: |
     CRITICAL="sshd|systemd|auditd|crond|rsyslogd|tuned|polkitd|dbus-daemon|NetworkManager|firewalld|chronyd|gssproxy|rpcbind|lsmd|sedispatch|accounts-daemon|uwsgi|uvicorn|cloudflared|python3|ansible"
-    ps aux --sort=-%cpu | awk -v thr={{ _cpu_thresh }} '
+    # Medir CPU total del sistema (delta 1s)
+    read _ u1 n1 s1 i1 _ < <(grep '^cpu ' /proc/stat); sleep 1
+    read _ u2 n2 s2 i2 _ < <(grep '^cpu ' /proc/stat)
+    total=$(( (u2+n2+s2+i2) - (u1+n1+s1+i1) ))
+    idle=$(( i2 - i1 ))
+    sys_cpu=$(( (total - idle) * 100 / (total > 0 ? total : 1) ))
+    # Umbral efectivo: si el sistema esta al maximo, bajar proporcionalmente
+    # para atrapar carga distribuida (ej: 4 procesos x 25% cada uno)
+    thr={{ _cpu_thresh }}
+    if [ $sys_cpu -ge 85 ] && [ $thr -gt 20 ]; then
+      thr=20
+    fi
+    ps aux --sort=-%cpu | awk -v thr=$thr '
       NR>1 && $3+0 >= thr {
         pid=$2; user=$1; cpu=$3; cmd=$11
         if (cmd ~ /^\[/) next
