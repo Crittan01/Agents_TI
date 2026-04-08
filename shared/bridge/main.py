@@ -109,7 +109,7 @@ def clean_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text).strip()
 
 
-def post_to_teams(card: dict) -> None:
+def post_to_teams(card: dict, _retries: int = 3, _backoff: float = 5.0) -> None:
     payload = {
         "type": "message",
         "attachments": [
@@ -119,13 +119,27 @@ def post_to_teams(card: dict) -> None:
             }
         ],
     }
-    try:
-        size = len(json.dumps(payload).encode("utf-8"))
-        logger.info("TEAMS payload size: %d bytes", size)
-        r = requests.post(TEAMS_WEBHOOK_URL, json=payload, timeout=10)
-        logger.info("TEAMS response: %s %s", r.status_code, r.text[:200])
-    except Exception as e:
-        logger.error("TEAMS webhook error: %s", e)
+    size = len(json.dumps(payload).encode("utf-8"))
+    logger.info("TEAMS payload size: %d bytes", size)
+    for attempt in range(1, _retries + 1):
+        try:
+            r = requests.post(TEAMS_WEBHOOK_URL, json=payload, timeout=10)
+            logger.info("TEAMS response: %s %s", r.status_code, r.text[:200])
+            if r.status_code in (200, 201, 202):
+                return
+            if r.status_code < 500:
+                # 4xx — no tiene sentido reintentar
+                logger.error("TEAMS error %s (no reintentable)", r.status_code)
+                return
+            # 5xx — reintentable
+            logger.warning("TEAMS %s en intento %d/%d — reintentando en %.0fs",
+                           r.status_code, attempt, _retries, _backoff)
+        except Exception as e:
+            logger.warning("TEAMS excepcion en intento %d/%d: %s", attempt, _retries, e)
+        if attempt < _retries:
+            time.sleep(_backoff)
+            _backoff *= 2   # backoff exponencial: 5s → 10s → 20s
+    logger.error("TEAMS: se agotaron %d intentos — card no entregada", _retries)
 
 
 def _extract_log_params(parsed: dict) -> dict:
