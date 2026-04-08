@@ -15,6 +15,7 @@ import logging
 import threading
 import urllib3
 
+import anthropic
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, BackgroundTasks, Request, HTTPException
@@ -25,9 +26,10 @@ _HERE       = os.path.dirname(os.path.abspath(__file__))
 _AGENTS_DIR = os.path.dirname(os.path.dirname(_HERE))
 
 sys.path.insert(0, _HERE)
-sys.path.insert(0, os.path.join(_AGENTS_DIR, "health-check", "bridge"))
-sys.path.insert(0, os.path.join(_AGENTS_DIR, "log-monitor",  "bridge"))
-sys.path.insert(0, os.path.join(_AGENTS_DIR, "remediator",   "bridge"))
+sys.path.insert(0, os.path.join(_AGENTS_DIR, "health-check",     "bridge"))
+sys.path.insert(0, os.path.join(_AGENTS_DIR, "log-monitor",      "bridge"))
+sys.path.insert(0, os.path.join(_AGENTS_DIR, "remediator",       "bridge"))
+sys.path.insert(0, os.path.join(_AGENTS_DIR, "inventory-query",  "bridge"))
 
 load_dotenv(os.path.join(_HERE, ".env"))
 
@@ -47,6 +49,8 @@ from aap import (
 import health_cards     as hc
 import log_cards        as lc
 import remediator_cards as rc
+import inventory_cards  as ic
+from inventory_reader import get_inventory_text, get_inventory
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 
@@ -65,8 +69,13 @@ logger = logging.getLogger(__name__)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-TEAMS_WEBHOOK_URL = os.getenv("TEAMS_WEBHOOK_URL", "")
-TEAMS_HMAC_TOKEN  = os.getenv("TEAMS_HMAC_TOKEN",  "")
+TEAMS_WEBHOOK_URL  = os.getenv("TEAMS_WEBHOOK_URL", "")
+TEAMS_HMAC_TOKEN   = os.getenv("TEAMS_HMAC_TOKEN",  "")
+_ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+_inv_client = (
+    anthropic.Anthropic(api_key=_ANTHROPIC_API_KEY) if _ANTHROPIC_API_KEY else None
+)
 
 _DEFAULT_LOG_PARAMS = {
     "time_window_hours": 2,
@@ -396,6 +405,52 @@ def wait_and_report_remediation(job_id: int, target: str,
     post_to_teams(rc.build_error_card(target, job_id, "Timeout: el job superó 5 minutos."))
 
 
+# ─── Inventory query (sincrono, sin AWX) ─────────────────────────────────────
+
+_INV_SYSTEM = (
+    "Eres AnsibleBot, asistente de infraestructura. "
+    "Responde preguntas sobre el inventario de servidores usando los datos provistos. "
+    "Sé conciso y preciso. Usa el español. "
+    "Si la respuesta es una lista de hosts, empiézala con el prefijo LIST: "
+    "seguido de los hostnames separados por coma (ej: LIST: HOST1, HOST2, HOST3). "
+    "Si es un número o estadística, da el dato directo. "
+    "Si la pregunta no tiene respuesta en el inventario, di exactamente: "
+    "No encontré esa información en el inventario."
+)
+
+def answer_inventory_query(pregunta: str) -> dict:
+    """
+    Responde en lenguaje natural usando Claude + el inventario dummy.
+    Devuelve una Adaptive Card lista para enviar.
+    """
+    if _inv_client is None:
+        return ic.build_error_card(pregunta, "API key de Anthropic no configurada.")
+
+    inv_text = get_inventory_text()
+    try:
+        resp = _inv_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            system=_INV_SYSTEM + "\n\nINVENTARIO:\n" + inv_text,
+            messages=[{"role": "user", "content": pregunta}],
+        )
+        answer = resp.content[0].text.strip()
+    except Exception as e:
+        logger.error("INV query error: %s", e)
+        return ic.build_error_card(pregunta, f"Error consultando el inventario: {e}")
+
+    # Si Claude devuelve una lista de hosts → card especializada
+    if answer.upper().startswith("LIST:"):
+        raw_list = answer[5:].strip()
+        hosts    = [h.strip() for h in raw_list.split(",") if h.strip()]
+        inv      = get_inventory()
+        # Determinar título de la consulta (primeras 6 palabras)
+        titulo = " ".join(pregunta.split()[:6])
+        return ic.build_host_list_card(pregunta, titulo, hosts, len(hosts))
+
+    return ic.build_query_card(pregunta, answer)
+
+
 # ─── Endpoint principal ──────────────────────────────────────────────────────
 
 @app.post("/teams/webhook")
@@ -548,6 +603,13 @@ async def teams_webhook(request: Request, background_tasks: BackgroundTasks):
             rc.build_remediation_launch_card(target, job_id, remediation_mode, issue_type)
         )
 
+    # ── Inventory query ───────────────────────────────────────────────────────
+    if intent == "inventory_query":
+        query = parsed.get("query", clean)
+        logger.info("INV query: %r", query[:120])
+        card = answer_inventory_query(query)
+        return ic._card_response(card)
+
     # ── Unknown ───────────────────────────────────────────────────────────────
     logger.info("ROUTER intent desconocido para: %r", clean[:80])
     return {
@@ -560,6 +622,8 @@ async def teams_webhook(request: Request, background_tasks: BackgroundTasks):
             "- @AnsibleBot errores en laboratorio ultima hora\n"
             "- @AnsibleBot limpia el disco de ol9server1\n"
             "- @AnsibleBot libera RAM en ol9server1\n"
-            "- @AnsibleBot diagnostica ol9server1"
+            "- @AnsibleBot diagnostica ol9server1\n"
+            "- @AnsibleBot cuantas maquinas tiene produccion\n"
+            "- @AnsibleBot dame la lista de servidores Weblogic"
         ),
     }

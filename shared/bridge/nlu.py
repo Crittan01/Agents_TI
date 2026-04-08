@@ -118,6 +118,13 @@ _SYSTEM_PROMPT = (
     "  remediate     : ejecuta la correccion\n"
     "  full_remediate: diagnostica + corrige + verifica\n"
     "  Parametros: issue_type (cpu|ram|disk|all|auto)\n\n"
+    "INTENTS DE INVENTARIO:\n"
+    "  inventory_query: cuando el usuario pregunta SOBRE EL INVENTARIO en si mismo:\n"
+    "    listados de maquinas, conteos, grupos existentes, cuantos servidores hay,\n"
+    "    en que ambiente esta X, a que grupo pertenece X, cuantos hosts tiene Y grupo,\n"
+    "    dame la lista de produccion/laboratorio/desarrollo, etc.\n"
+    "    NO se ejecuta ningun playbook ni se verifica salud/logs — solo consulta de datos.\n"
+    "    Parametro query: la pregunta original del usuario, sin modificar.\n\n"
     "OTROS:\n"
     "  clarify : SOLO para ambiguedad de nombre de host/grupo\n"
     "  unknown : accion no relacionada\n\n"
@@ -136,6 +143,7 @@ _SYSTEM_PROMPT = (
     '{"intent":"remediate","target":"NOMBRE","type":"host","issue_type":"disk"}\n'
     '{"intent":"remediate","target":"NOMBRE","type":"group","issue_type":"ram"}\n'
     '{"intent":"full_remediate","target":"NOMBRE","type":"host","issue_type":"auto"}\n'
+    '{"intent":"inventory_query","query":"pregunta original del usuario"}\n'
     '{"intent":"clarify","question":"pregunta corta max 15 palabras"}\n'
     '{"intent":"unknown"}\n'
 )
@@ -157,12 +165,19 @@ def _fallback_parse(text: str) -> dict:
                     "outofmemory", "warn", "falla", "fallos")
     health_kw    = ("cpu", "ram", "disco", "salud", "health", "valida", "revisar", "checa",
                     "memoria", "como esta", "como anda", "estado", "recursos")
+    inv_kw       = ("cuantas maquinas", "cuantos servidores", "cuantos hosts", "dame la lista",
+                    "listado de", "que maquinas", "que servidores", "que grupos", "que ambientes",
+                    "en que grupo", "a que grupo", "en que ambiente", "cuantos hay en",
+                    "dame los servidores", "servidores de produccion", "servidores de laboratorio",
+                    "servidores de desarrollo", "maquinas de produccion", "maquinas de laboratorio",
+                    "maquinas de desarrollo", "inventario")
 
     is_full      = any(kw in lower for kw in full_kw)
     is_remediate = any(kw in lower for kw in remediate_kw) and not is_full
     is_diagnose  = any(kw in lower for kw in diagnose_kw) and not is_full and not is_remediate
-    is_log       = any(kw in lower for kw in log_kw) and not is_remediate and not is_diagnose
-    is_health    = any(kw in lower for kw in health_kw) and not is_log and not is_remediate
+    is_inv       = any(kw in lower for kw in inv_kw) and not is_full and not is_remediate and not is_diagnose
+    is_log       = any(kw in lower for kw in log_kw) and not is_remediate and not is_diagnose and not is_inv
+    is_health    = any(kw in lower for kw in health_kw) and not is_log and not is_remediate and not is_inv
 
     # Detectar issue_type para remediación
     issue = "auto"
@@ -175,6 +190,8 @@ def _fallback_parse(text: str) -> dict:
     candidate = parts[-1].upper() if parts else ""
     ttype     = "group" if candidate in _GROUPS_SET else "host"
 
+    if is_inv:
+        return {"intent": "inventory_query", "query": text}
     if is_full:
         return {"intent": "full_remediate", "target": candidate, "type": ttype, "issue_type": issue}
     if is_remediate:
