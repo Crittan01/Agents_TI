@@ -23,7 +23,7 @@ ol9server1    ansible_host=192.168.250.30
 # rocky9server1 ansible_host=192.168.250.40
 
 [P8_DESA]
-# ol9server1    ansible_host=192.168.250.30
+# ol9server1    ansible_host=192.168.25volt.log0.30
 # rocky9server1 ansible_host=192.168.250.40
 
 [P8_LABO]
