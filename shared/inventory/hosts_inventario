@@ -3,39 +3,39 @@
 # rocky9server1: Rocky Linux 9.7   — 192.168.250.40
 
 [WEBLOGIC_DLLO]
-ol9server1    ansible_host=192.168.250.30
-rocky9server1 ansible_host=192.168.250.40
+# ol9server1    ansible_host=192.168.250.30
+# rocky9server1 ansible_host=192.168.250.40
 
 [WEBLOGIC_LAB]
-ol9server1    ansible_host=192.168.250.30
+# ol9server1    ansible_host=192.168.250.30
 rocky9server1 ansible_host=192.168.250.40
 
 [WEBLOGIC_PDN]
 ol9server1    ansible_host=192.168.250.30
-rocky9server1 ansible_host=192.168.250.40
+# rocky9server1 ansible_host=192.168.250.40
 
 [JOOMLA_LABO]
-ol9server1    ansible_host=192.168.250.30
+# ol9server1    ansible_host=192.168.250.30
 rocky9server1 ansible_host=192.168.250.40
 
 [JOOMLA_PROD]
 ol9server1    ansible_host=192.168.250.30
-rocky9server1 ansible_host=192.168.250.40
+# rocky9server1 ansible_host=192.168.250.40
 
 [P8_DESA]
-ol9server1    ansible_host=192.168.250.30
-rocky9server1 ansible_host=192.168.250.40
+# ol9server1    ansible_host=192.168.250.30
+# rocky9server1 ansible_host=192.168.250.40
 
 [P8_LABO]
-ol9server1    ansible_host=192.168.250.30
+# ol9server1    ansible_host=192.168.250.30
 rocky9server1 ansible_host=192.168.250.40
 
 [P8_PROD]
 ol9server1    ansible_host=192.168.250.30
-rocky9server1 ansible_host=192.168.250.40
+# rocky9server1 ansible_host=192.168.250.40
 
 [WEBLOGIC:children]
-WEBLOGIC_DLLO
+# WEBLOGIC_DLLO
 WEBLOGIC_LAB
 WEBLOGIC_PDN
 
@@ -44,6 +44,6 @@ JOOMLA_LABO
 JOOMLA_PROD
 
 [P8:children]
-P8_DESA
+# P8_DESA
 P8_LABO
 P8_PROD
