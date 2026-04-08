@@ -2,8 +2,8 @@
 
 Sistema de agentes sobre **AAP / AWX** que permite operar servidores Linux en lenguaje natural
 desde **Microsoft Teams**. El operador escribe una frase libre; un NLU basado en Claude la
-convierte en un job de Ansible, que se ejecuta en el servidor objetivo y devuelve una tarjeta
-Adaptive Card con el resultado.
+convierte en un job de Ansible (o en una consulta directa al inventario), que devuelve una
+tarjeta Adaptive Card con el resultado.
 
 ---
 
@@ -16,6 +16,7 @@ Adaptive Card con el resultado.
    - [Health Check](#health-check)
    - [Log Monitor](#log-monitor)
    - [Remediador](#remediador)
+   - [Inventory Query](#inventory-query)
 5. [NLU — Intents y ejemplos](#nlu)
 6. [Recursos AWX](#recursos-awx)
 7. [Stack tecnológico](#stack)
@@ -37,22 +38,29 @@ Operador (Teams — lenguaje natural)
                                     ▼
                           NLU (Claude Haiku)  ──►  intent + target + params
                                     │
-                                    ▼
-                          AAP REST API  ──►  Job Template con extra_vars
-                                    │
-                                    ▼
-                    Rol Ansible ejecuta en servidor(es) Linux
-                    Publica resultados via  set_stats  →  artifacts
-                                    │
-                                    ▼
-                     Bridge lee artifacts  ──►  Adaptive Card a Teams
+                   ┌────────────────┴─────────────────────┐
+                   │                                       │
+          intent ∈ {health, log, remediate}       intent = inventory_query
+                   │                                       │
+                   ▼                                       ▼
+          AAP REST API  ──►  Job Template        Inventario INI + Claude Haiku
+                   │         con extra_vars       (sin AWX, sin SSH — < 1 s)
+                   ▼                                       │
+     Rol Ansible ejecuta en servidor(es) Linux             │
+     Publica resultados via  set_stats → artifacts         │
+                   │                                       │
+                   └──────────────┬────────────────────────┘
+                                  ▼
+                    Bridge lee datos  ──►  Adaptive Card a Teams
 ```
 
 **Principios de diseño:**
-- Un solo webhook unificado despacha los 3 casos de uso según el intent NLU.
+- Un solo webhook unificado despacha los 4 casos de uso según el intent NLU.
 - Filtrado de recursos end-to-end: el NLU extrae qué recursos se pidieron, el playbook
   ejecuta solo esos tasks, el artifact solo contiene esas claves, la card solo renderiza
   lo que llegó.
+- `inventory_query` no usa AWX ni SSH — responde en < 1 segundo consultando el inventario
+  dummy directamente con Claude Haiku como motor de consulta.
 - Los errores en servidores individuales no detienen la ejecución global.
 - Hosts no alcanzables siempre aparecen en el resultado, marcados como `unreachable`.
 - Todo configurable vía `.env` — sin credenciales hardcodeadas.
@@ -70,11 +78,11 @@ agents/
 │   │   ├── main.py                  ← FastAPI: router de intents + background tasks
 │   │   ├── nlu.py                   ← NLU con Claude Haiku (LLM + fallback keywords)
 │   │   ├── aap.py                   ← cliente REST de AWX
+│   │   ├── test_nlu.py              ← suite de pruebas del NLU (39 casos)
 │   │   ├── .env                     ← credenciales y IDs (no commitear)
-│   │   ├── requirements.txt
-│   │   └── volt.log
+│   │   └── requirements.txt
 │   ├── inventory/
-│   │   └── hosts_inventario         ← inventario INI (grupos + hosts)
+│   │   └── hosts_inventario         ← inventario INI real (grupos + hosts SSH)
 │   └── docs/
 │       ├── naming_convention.md     ← convención de nombres de servidores
 │       └── Rutas_de_logs.xlsx       ← catálogo de rutas de logs por servidor
@@ -103,20 +111,27 @@ agents/
 │   └── bridge/
 │       └── log_cards.py
 │
-└── remediator/
-    ├── playbooks/
-    │   ├── remediator.yml           ← playbook principal (3 plays)
-    │   └── roles/remediator/
-    │       └── tasks/
-    │           ├── main.yml         ← orquestación + block/rescue/always
-    │           ├── diagnose.yml     ← métricas CPU/RAM/Disco + top procesos (pre y post)
-    │           ├── fix_cpu.yml      ← mata procesos con CPU > umbral
-    │           ├── fix_ram.yml      ← drop_caches + journal + kill selectivo
-    │           └── fix_disk.yml     ← 5 estrategias de limpieza de disco
-    ├── bridge/
-    │   └── remediator_cards.py
-    └── tests/
-        └── stress.sh                ← genera carga realista para certificar el remediador
+├── remediator/
+│   ├── playbooks/
+│   │   ├── remediator.yml           ← playbook principal (3 plays)
+│   │   └── roles/remediator/
+│   │       └── tasks/
+│   │           ├── main.yml         ← orquestación + block/rescue/always
+│   │           ├── diagnose.yml     ← métricas CPU/RAM/Disco + top procesos (pre y post)
+│   │           ├── fix_cpu.yml      ← mata procesos con CPU > umbral efectivo
+│   │           ├── fix_ram.yml      ← drop_caches + journal + kill selectivo
+│   │           └── fix_disk.yml     ← 5 estrategias de limpieza de disco
+│   ├── bridge/
+│   │   └── remediator_cards.py
+│   └── tests/
+│       └── stress.sh                ← genera carga realista para certificar el remediador
+│
+└── inventory-query/                 ← módulo sin AWX: consulta NL sobre inventario dummy
+    ├── data/
+    │   └── dummy_inventory.ini      ← ~63 hosts ficticios, 6 apps, 3 ambientes
+    └── bridge/
+        ├── inventory_reader.py      ← parser INI + modelo estructurado + singleton cache
+        └── inventory_cards.py       ← Adaptive Cards: query, host list, summary, error
 ```
 
 ---
@@ -214,7 +229,7 @@ VOLT criticos en laboratorio
 ```json
 {
   "ol9server1": {
-    "generated_at": "2026-04-02T14:00:00Z",
+    "generated_at": "2026-04-08T14:00:00Z",
     "status": "ok",
     "cpu": 4.4,
     "ram": {"used_percent": "77.0", "free_mb": "79", "total_mb": "335"},
@@ -253,7 +268,7 @@ base_log_paths:
     patterns: ["secure*", "audit*"]
 ```
 
-Rutas adicionales por host en `host_vars/{HOSTNAME}.yml` (pobladas desde `Rutas_de_logs.xlsx`).
+Rutas adicionales por host en `host_vars/{HOSTNAME}.yml`.
 Si una ruta no existe en el servidor se omite silenciosamente y se reporta en `paths_skipped`.
 
 **Artifact publicado:**
@@ -264,7 +279,7 @@ Si una ruta no existe en el servidor se omite silenciosamente y se reporta en `p
     "files_scanned": 3,
     "errors": 8,
     "warns": 0,
-    "sample": ["Apr 2 12:41:09 ol9server1 kernel: RAS: Correctable Errors..."],
+    "sample": ["Apr 8 12:41:09 ol9server1 kernel: RAS: Correctable Errors..."],
     "paths_skipped": [],
     "time_window_hours": 2,
     "severity": "ERROR",
@@ -308,7 +323,7 @@ La card resultante también filtra y muestra únicamente las métricas del issue
 
 | Fixer | Estrategias |
 |-------|------------|
-| `fix_cpu.yml` | Detecta procesos con CPU > umbral (default 80%), excluye servicios críticos, mata candidatos con SIGTERM |
+| `fix_cpu.yml` | Detecta procesos con CPU > umbral (default 80%; baja a 20% si CPU del sistema ≥ 85%), excluye servicios críticos, mata candidatos con SIGTERM |
 | `fix_ram.yml` | `sync && drop_caches` (siempre seguro) → `journalctl --vacuum-size=100M` → kill de procesos con alto %MEM si RAM ≥ 80% post-drop |
 | `fix_disk.yml` | 1) Archivos >500MB en `/tmp` · 2) Archivos viejos >7d en `disk_clean_path` · 3) Logs rotados `*.gz *.1 *.2 *-YYYYMMDD` · 4) `journalctl --vacuum-time=7d` · 5) `dnf clean all` · 6) Core dumps en `/var/crash` y `core.*` |
 
@@ -343,6 +358,45 @@ NetworkManager  firewalld  chronyd  uwsgi  uvicorn  cloudflared  python3  ansibl
 
 ---
 
+### 4. Inventory Query <a name="inventory-query"></a>
+
+Responde preguntas en lenguaje natural sobre el inventario de servidores **sin ejecutar
+ningún playbook ni conexión SSH**. Usa un inventario dummy (`dummy_inventory.ini`) y
+Claude Haiku como motor de consulta. Respuesta en < 1 segundo.
+
+**Ejemplos en Teams:**
+```
+VOLT cuantas maquinas tiene produccion
+VOLT dame la lista de servidores de desarrollo
+VOLT cuantos hosts hay en total
+VOLT en que grupo esta SGWLSAPPP01
+VOLT cuantos servidores tiene Joomla laboratorio
+VOLT que aplicaciones hay en el inventario
+```
+
+**Inventario dummy — resumen:**
+
+| Ambiente | Grupos | Hosts |
+|----------|--------|-------|
+| Produccion | WEBLOGIC_PDN, JOOMLA_PROD, P8_PROD, OHS_PROD, SAP_PROD, ADM_PROD | 35 |
+| Laboratorio | WEBLOGIC_LAB, JOOMLA_LABO, P8_LABO, OHS_LABO, SAP_LABO, ADM_LABO | 19 |
+| Desarrollo | WEBLOGIC_DLLO, JOOMLA_DLLO, P8_DESA, SAP_DESA | 9 |
+| **Total** | **25 grupos** | **63 hosts** |
+
+**Tipos de respuesta:**
+
+| Consulta | Card generada |
+|----------|--------------|
+| Conteo o estadística | `build_query_card` — texto directo |
+| Lista de hosts | `build_host_list_card` — columnas paginadas (max 30) |
+| Resumen global | `build_summary_card` — FactSets por ambiente y app |
+| Error / no encontrado | `build_error_card` |
+
+> La card se envía fuera del hilo al canal (igual que fleet_check), precedida por
+> `"Consultando inventario..."` en el hilo de conversación.
+
+---
+
 ## NLU — Intents y ejemplos <a name="nlu"></a>
 
 El NLU usa **Claude Haiku** como modelo principal y un parser de palabras clave como fallback.
@@ -369,6 +423,9 @@ Carga el inventario y la convención de nombres en el system prompt para resolve
 {"intent":"remediate",       "target":"ol9server1","type":"host","issue_type":"disk"}
 {"intent":"full_remediate",  "target":"ol9server1","type":"host","issue_type":"auto"}
 
+// Inventario (sin AWX)
+{"intent":"inventory_query","query":"cuantas maquinas tiene produccion"}
+
 // Otros
 {"intent":"clarify","question":"Te refieres a produccion o laboratorio?"}
 {"intent":"unknown"}
@@ -376,10 +433,20 @@ Carga el inventario y la convención de nombres en el system prompt para resolve
 
 ### Reglas de clasificación (orden estricto)
 
-1. **Remediación** — palabras: `limpia, libera, arregla, remedia, corrige, fix, clean, depura, soluciona`
-2. **Log** — palabras: `errores, logs, busca, ORA-, Exception, OutOfMemory, WARN`
-3. **Salud** — palabras: `CPU, RAM, disco, memoria, salud, como esta, valida, estado, recursos`
-4. Ambigüedad → **Log** (nunca `clarify`, salvo colisión de nombres de host)
+1. **Remediación** — palabras: `limpia, libera, arregla, remedia, corrige, fix, clean, soluciona`
+2. **Inventario** — palabras: `cuantas maquinas, cuantos servidores, listado de, dame la lista, en que grupo, a que grupo, inventario`
+3. **Log** — palabras: `errores, logs, busca, ORA-, Exception, OutOfMemory, WARN`
+4. **Salud** — palabras: `CPU, RAM, disco, memoria, salud, como esta, valida, estado, recursos`
+5. Ambigüedad → **Log** (nunca `clarify`, salvo colisión de nombres de host)
+
+> `"servidores criticos de X"` → `fleet_check` (salud), NO `inventory_query`.
+
+### Suite de pruebas
+
+```bash
+cd /Ansible/agents/shared/bridge
+python3 test_nlu.py   # 39 casos — debe dar 39/39
+```
 
 ---
 
@@ -406,12 +473,13 @@ Carga el inventario y la convención de nombres en el system prompt para resolve
 |---|---|
 | Python 3.9 | Bridge y módulos Ansible custom |
 | FastAPI + uvicorn | Endpoint `/teams/webhook` (ASGI, `--reload` en dev) |
-| anthropic SDK | NLU con Claude Haiku (`claude-haiku-4-5-20251001`) |
+| anthropic SDK | NLU con Claude Haiku (`claude-haiku-4-5-20251001`) + Inventory Query |
 | requests | Cliente HTTP para AWX REST API y Teams webhook |
 | python-dotenv | Variables de entorno desde `.env` |
+| configparser | Parser de inventario INI para `inventory-query` |
 | Ansible / AWX | Ejecución de playbooks en servidores Linux |
 | Cloudflare Tunnel | Exposición del webhook a Microsoft Teams |
-| Microsoft Teams | Incoming Webhook + Adaptive Cards v1.4 |
+| Microsoft Teams | Incoming Webhook + Adaptive Cards v1.2 |
 
 ---
 
@@ -441,7 +509,7 @@ ssh ansible@ol9server1 'bash -s' < remediator/tests/stress.sh clean
 |------|-------------------|--------------------|
 | `cpu` | 4 × `sha256sum /dev/urandom` → CPU ~100% | Sí — `sha256sum` no está excluido |
 | `ram` | Perl adaptativo: calcula MB necesarios para llegar a 87% · `setsid` para sobrevivir al SSH | Sí — `perl` no está excluido |
-| `disk` | `/tmp/stress_large.bin` 3.2GB + archivos viejos backdateados 30d + logs rotados `*.1/*.gz/*-YYYYMMDD` + core dumps → /tmp ~88% | Sí — ejercita los 5 paths de `fix_disk.yml` |
+| `disk` | `/tmp/stress_large.bin` 3.2GB + archivos viejos backdateados 30d + logs rotados + core dumps → /tmp ~88% | Sí — ejercita los 5 paths de `fix_disk.yml` |
 | `all` | CPU 100% · RAM ~87% · Disco /tmp ~88% | Los tres recursos remediables |
 
 ### Paths de fix_disk.yml cubiertos
@@ -499,6 +567,9 @@ Play 3: Consolidar en localhost
         (incluye unreachable en artifact, lanza set_stats global)
 ```
 
+> Si el módulo no requiere AWX (como `inventory-query`), omitir plays y conectar
+> directamente en el handler de `main.py`.
+
 ### 3. Bridge Python
 
 ```
@@ -507,10 +578,10 @@ nuevo-caso/bridge/nuevo_cards.py   ← constructores de Adaptive Cards
 
 En `shared/bridge/`:
 - `nlu.py` — agregar nuevos intents al system prompt y al fallback parser
-- `aap.py` — agregar `launch_nuevo_job()` y `extract_nuevo_data()`
+- `aap.py` — agregar `launch_nuevo_job()` y `extract_nuevo_data()` (si usa AWX)
 - `main.py` — agregar handler para el nuevo intent en el router
 
-### 4. AWX
+### 4. AWX (si aplica)
 
 1. Crear Job Template apuntando al playbook nuevo
 2. Agregar `NUEVO_JOB_TEMPLATE_ID` al `.env`
