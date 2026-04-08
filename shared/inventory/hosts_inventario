@@ -1,28 +1,38 @@
-# Inventario generado desde CM3_Rutas_de_logs.xlsx
+# Inventario de laboratorio — AnsibleBot
+# ol9server1:    Oracle Linux 9.7  — 192.168.250.30
+# rocky9server1: Rocky Linux 9.7   — 192.168.250.40
 
 [WEBLOGIC_DLLO]
-ol9server1 ansible_host=192.168.250.30
+ol9server1    ansible_host=192.168.250.30
+rocky9server1 ansible_host=192.168.250.40
 
 [WEBLOGIC_LAB]
-ol9server1 ansible_host=192.168.250.30
+ol9server1    ansible_host=192.168.250.30
+rocky9server1 ansible_host=192.168.250.40
 
 [WEBLOGIC_PDN]
-ol9server1 ansible_host=192.168.250.30
+ol9server1    ansible_host=192.168.250.30
+rocky9server1 ansible_host=192.168.250.40
 
 [JOOMLA_LABO]
-ol9server1 ansible_host=192.168.250.30
+ol9server1    ansible_host=192.168.250.30
+rocky9server1 ansible_host=192.168.250.40
 
 [JOOMLA_PROD]
-ol9server1 ansible_host=192.168.250.30
+ol9server1    ansible_host=192.168.250.30
+rocky9server1 ansible_host=192.168.250.40
 
 [P8_DESA]
-ol9server1 ansible_host=192.168.250.30
+ol9server1    ansible_host=192.168.250.30
+rocky9server1 ansible_host=192.168.250.40
 
 [P8_LABO]
-ol9server1 ansible_host=192.168.250.30
+ol9server1    ansible_host=192.168.250.30
+rocky9server1 ansible_host=192.168.250.40
 
 [P8_PROD]
-ol9server1 ansible_host=192.168.250.30
+ol9server1    ansible_host=192.168.250.30
+rocky9server1 ansible_host=192.168.250.40
 
 [WEBLOGIC:children]
 WEBLOGIC_DLLO
