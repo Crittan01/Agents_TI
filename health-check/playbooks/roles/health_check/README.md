@@ -4,7 +4,7 @@ Rol de Ansible para recolectar metricas de salud en servidores Linux (CPU, RAM y
 
 Soporta ejecucion sobre un **host individual** o un **grupo completo**. Cuando se ejecuta sobre un grupo, consolida los datos de todos los hosts en un unico artifact usando `hostvars` + `run_once`.
 
-Forma parte del flujo de automatizacion **AnsibleBot**:
+Forma parte del flujo de automatizacion **VOLT**:
 
 ```
 Teams / Streamlit

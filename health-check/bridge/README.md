@@ -1,4 +1,4 @@
-# AnsibleBot — Health Check Bridge
+# VOLT — Health Check Bridge
 
 Sistema de automatizacion que permite ejecutar health checks sobre servidores y grupos Linux desde dos interfaces: **Microsoft Teams** y **Streamlit** (web app local). Conecta con AAP (Ansible Automation Platform) para lanzar playbooks y retornar resultados en tiempo real.
 
@@ -265,7 +265,7 @@ Formato del artifact (un host por clave raiz):
 - Puerto 8501 entrante desde red interna (para Streamlit, opcional)
 - Puerto 443 saliente hacia `*.webhook.office.com` y `api.anthropic.com`
 - Certificado SSL emitido por CA interna o publica para el FQDN del servidor
-- Registro DNS interno: `ansiblebot.sura.com.co` → IP del servidor
+- Registro DNS interno: `volt.sura.com.co` → IP del servidor
 - Admin de Teams de Sura configura el Outgoing Webhook
 
 ---
@@ -303,7 +303,7 @@ cp .env.example .env
 #### Como obtener TEAMS_HMAC_TOKEN
 
 ```
-Canal Teams → ••• → Aplicaciones → AnsibleBot → Editar → Security token
+Canal Teams → ••• → Aplicaciones → VOLT → Editar → Security token
 ```
 
 ---
@@ -323,7 +323,7 @@ cloudflared tunnel --url http://localhost:8000 --protocol http2
 
 Actualizar la URL del Outgoing Webhook en Teams cada vez que cambie el tunnel:
 ```
-Canal → ••• → Aplicaciones → AnsibleBot → Editar
+Canal → ••• → Aplicaciones → VOLT → Editar
 URL: https://<nueva-url>.trycloudflare.com/teams/webhook
 ```
 
@@ -345,24 +345,24 @@ No requiere Cloudflare. Acceso directo via browser local o interno.
 
 **Servidor individual:**
 ```
-@AnsibleBot validar SGWLSAPPP01
-@AnsibleBot checa el agente suramericana produccion 3
-@AnsibleBot como esta el servidor 7 de WLS produccion
+@VOLT validar SGWLSAPPP01
+@VOLT checa el agente suramericana produccion 3
+@VOLT como esta el servidor 7 de WLS produccion
 ```
 
 **Grupo especifico:**
 ```
-@AnsibleBot revisa el grupo P8 de desarrollo
-@AnsibleBot como van los WebLogic de produccion
-@AnsibleBot valida todos los P8 de laboratorio
+@VOLT revisa el grupo P8 de desarrollo
+@VOLT como van los WebLogic de produccion
+@VOLT valida todos los P8 de laboratorio
 ```
 
 **Barrido de ambiente completo:**
 ```
-@AnsibleBot ¿como esta produccion?
-@AnsibleBot ¿hay problemas en prod?
-@AnsibleBot ¿hay servidores en umbral alto en desarrollo?
-@AnsibleBot estado general de laboratorio
+@VOLT ¿como esta produccion?
+@VOLT ¿hay problemas en prod?
+@VOLT ¿hay servidores en umbral alto en desarrollo?
+@VOLT estado general de laboratorio
 ```
 
 Respuesta inmediata: mensaje de texto confirmando los jobs lanzados.

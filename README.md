@@ -1,4 +1,4 @@
-# AnsibleBot — Agentes de Automatización Inteligente
+# VOLT — Agentes de Automatización Inteligente
 
 Sistema de agentes sobre **AAP / AWX** que permite operar servidores Linux en lenguaje natural
 desde **Microsoft Teams**. El operador escribe una frase libre; un NLU basado en Claude la
@@ -72,7 +72,7 @@ agents/
 │   │   ├── aap.py                   ← cliente REST de AWX
 │   │   ├── .env                     ← credenciales y IDs (no commitear)
 │   │   ├── requirements.txt
-│   │   └── ansiblebot.log
+│   │   └── volt.log
 │   ├── inventory/
 │   │   └── hosts_inventario         ← inventario INI (grupos + hosts)
 │   └── docs/
@@ -192,11 +192,11 @@ Verifica el estado de CPU, RAM y/o Disco de un host o grupo.
 
 **Ejemplos en Teams:**
 ```
-AnsibleBot como esta ol9server1
-AnsibleBot dame la RAM de ol9server1
-AnsibleBot CPU y disco de ol9server1
-AnsibleBot salud de produccion
-AnsibleBot criticos en laboratorio
+VOLT como esta ol9server1
+VOLT dame la RAM de ol9server1
+VOLT CPU y disco de ol9server1
+VOLT salud de produccion
+VOLT criticos en laboratorio
 ```
 
 **Filtrado por recurso — end-to-end:**
@@ -236,10 +236,10 @@ Escanea logs del sistema y de aplicación en busca de errores, warnings o palabr
 
 **Ejemplos en Teams:**
 ```
-AnsibleBot hay errores en ol9server1
-AnsibleBot busca errores en ol9server1 ultima hora
-AnsibleBot errores en produccion
-AnsibleBot busca OutOfMemory en WEBLOGIC_PDN
+VOLT hay errores en ol9server1
+VOLT busca errores en ol9server1 ultima hora
+VOLT errores en produccion
+VOLT busca OutOfMemory en WEBLOGIC_PDN
 ```
 
 **Parámetros:** `time_window_hours` (default 2h) · `severity` (ERROR/WARN/ALL) · `keyword`
@@ -291,12 +291,12 @@ Diagnostica y/o corrige problemas de CPU, RAM y Disco en servidores Linux.
 
 **Ejemplos en Teams:**
 ```
-AnsibleBot diagnostica ol9server1
-AnsibleBot arregla la CPU de ol9server1
-AnsibleBot limpia el disco de ol9server1
-AnsibleBot libera RAM de ol9server1
-AnsibleBot arregla ol9server1              ← issue_type=auto
-AnsibleBot revisa y arregla ol9server1     ← full + auto
+VOLT diagnostica ol9server1
+VOLT arregla la CPU de ol9server1
+VOLT limpia el disco de ol9server1
+VOLT libera RAM de ol9server1
+VOLT arregla ol9server1              ← issue_type=auto
+VOLT revisa y arregla ol9server1     ← full + auto
 ```
 
 **`issue_type`:** `cpu` · `ram` · `disk` · `auto`
@@ -465,10 +465,10 @@ cloudflared tunnel --url http://localhost:8000 --protocol http2 &
 ssh ansible@ol9server1 'bash -s' < remediator/tests/stress.sh all 180
 
 # 3. Enviar comandos desde Teams (dentro de los 180s de duracion)
-#    AnsibleBot arregla ol9server1        ← auto detecta CPU + disco
-#    AnsibleBot arregla la CPU de ol9server1
-#    AnsibleBot limpia el disco de ol9server1
-#    AnsibleBot libera RAM de ol9server1
+#    VOLT arregla ol9server1        ← auto detecta CPU + disco
+#    VOLT arregla la CPU de ol9server1
+#    VOLT limpia el disco de ol9server1
+#    VOLT libera RAM de ol9server1
 
 # 4. Limpiar si quedó algo
 ssh ansible@ol9server1 'bash -s' < remediator/tests/stress.sh clean

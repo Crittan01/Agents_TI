@@ -1,6 +1,6 @@
-# AnsibleBot — Hoja de Vida
+# VOLT — Hoja de Vida
 
-**Proyecto:** AnsibleBot — Interfaz de Lenguaje Natural para Operaciones de Infraestructura
+**Proyecto:** VOLT — Interfaz de Lenguaje Natural para Operaciones de Infraestructura
 **Plataforma:** AAP / AWX · Microsoft Teams · Python · Ansible
 **Repositorio:** `https://github.com/Crittan01/Agents_TI` · rama `develop`
 
@@ -22,16 +22,16 @@ Estas acciones normalmente implican:
 
 ### Solución
 
-**AnsibleBot** permite que cualquier operador ejecute estas acciones escribiendo una frase
+**VOLT** permite que cualquier operador ejecute estas acciones escribiendo una frase
 en lenguaje natural dentro de **Microsoft Teams**, sin acceso SSH, sin conocimiento de
 comandos y con respuesta en menos de 2 minutos.
 
 ```
-Operador en Teams:                    AnsibleBot responde (< 2 min):
+Operador en Teams:                    VOLT responde (< 2 min):
 ─────────────────────────────         ──────────────────────────────────
-"AnsibleBot como esta ol9server1"  →  Tarjeta con CPU 4% · RAM 77% · Disco 36%
-"AnsibleBot hay errores en ol9server1" → Tarjeta con 8 errores + muestra de logs
-"AnsibleBot arregla ol9server1"    →  Tarjeta con acciones ejecutadas + antes/después
+"VOLT como esta ol9server1"  →  Tarjeta con CPU 4% · RAM 77% · Disco 36%
+"VOLT hay errores en ol9server1" → Tarjeta con 8 errores + muestra de logs
+"VOLT arregla ol9server1"    →  Tarjeta con acciones ejecutadas + antes/después
 ```
 
 ### Contexto de uso
@@ -203,16 +203,16 @@ La tarjeta solo muestra las métricas del recurso que fue intervenido.
 
 **Ejemplos válidos:**
 ```
-AnsibleBot como esta ol9server1
-AnsibleBot dame solo la RAM de ol9server1
-AnsibleBot hay errores en ol9server1
-AnsibleBot busca errores en produccion ultima hora
-AnsibleBot arregla ol9server1
-AnsibleBot limpia el disco de ol9server1
-AnsibleBot libera RAM de ol9server1
-AnsibleBot diagnostica ol9server1
-AnsibleBot salud de laboratorio
-AnsibleBot criticos en produccion
+VOLT como esta ol9server1
+VOLT dame solo la RAM de ol9server1
+VOLT hay errores en ol9server1
+VOLT busca errores en produccion ultima hora
+VOLT arregla ol9server1
+VOLT limpia el disco de ol9server1
+VOLT libera RAM de ol9server1
+VOLT diagnostica ol9server1
+VOLT salud de laboratorio
+VOLT criticos en produccion
 ```
 
 **Parámetros extraídos por el NLU:**
